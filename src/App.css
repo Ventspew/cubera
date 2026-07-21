@@ -853,6 +853,8 @@ input:focus {
   object-fit: cover;
   background: #1a1510;
 }
+
+.ms-login-box {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
