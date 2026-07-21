@@ -848,6 +848,26 @@ input:focus {
   line-height: 1.4;
 }
 
+.ms-login-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.1rem;
+  background: rgba(232, 168, 106, 0.08);
+  border: 1px solid var(--line-strong);
+  clip-path: var(--cut-sm);
+}
+
+.ms-code {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: var(--accent-bright);
+  text-align: center;
+}
+
 .divider {
   display: flex;
   align-items: center;

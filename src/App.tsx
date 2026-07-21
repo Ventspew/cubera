@@ -200,6 +200,8 @@ export default function App() {
 
   const [offlineName, setOfflineName] = useState("");
   const [deviceMsg, setDeviceMsg] = useState<string | null>(null);
+  const [deviceCode, setDeviceCode] = useState<string | null>(null);
+  const [deviceUri, setDeviceUri] = useState<string | null>(null);
 
   const [modQuery, setModQuery] = useState("");
   const [modHits, setModHits] = useState<ModHit[]>([]);
@@ -363,6 +365,9 @@ export default function App() {
 
   async function microsoftLogin() {
     setBusy(true);
+    setDeviceMsg(null);
+    setDeviceCode(null);
+    setDeviceUri(null);
     try {
       const code = await invoke<{
         user_code: string;
@@ -371,15 +376,27 @@ export default function App() {
         interval: number;
         message: string;
       }>("start_microsoft_login");
-      setDeviceMsg(`${code.message} Code: ${code.user_code}`);
+      setDeviceCode(code.user_code);
+      setDeviceUri(code.verification_uri);
+      setDeviceMsg(
+        "Open de link, vul de code in en wacht tot Cubera je account ophaalt…",
+      );
       await openUrl(code.verification_uri);
+      try {
+        await navigator.clipboard.writeText(code.user_code);
+      } catch {
+        /* clipboard optional */
+      }
       const account = await invoke<Account>("poll_microsoft_login", {
         deviceCode: code.device_code,
         interval: code.interval,
       });
       setDeviceMsg(null);
+      setDeviceCode(null);
+      setDeviceUri(null);
       showStatus(`Ingelogd als ${account.name}`);
       await refresh();
+      setTab("play");
     } catch (e) {
       showStatus(String(e), true);
     } finally {
@@ -860,9 +877,32 @@ export default function App() {
             <p className="section-sub">Microsoft-login of een offline-profiel.</p>
 
             <button type="button" className="cta" disabled={busy} onClick={microsoftLogin}>
-              Inloggen met Microsoft
+              {busy && deviceCode ? "Wachten op Microsoft…" : "Inloggen met Microsoft"}
             </button>
-            {deviceMsg && <p className="hint">{deviceMsg}</p>}
+            {deviceCode && (
+              <div className="ms-login-box">
+                <p className="hint">Ga naar microsoft.com/link en voer deze code in:</p>
+                <p className="ms-code">{deviceCode}</p>
+                <div className="row">
+                  <button
+                    type="button"
+                    className="cta secondary"
+                    onClick={() => deviceUri && openUrl(deviceUri)}
+                  >
+                    Open loginpagina
+                  </button>
+                  <button
+                    type="button"
+                    className="cta secondary"
+                    onClick={() => navigator.clipboard.writeText(deviceCode)}
+                  >
+                    Kopieer code
+                  </button>
+                </div>
+                {deviceMsg && <p className="hint">{deviceMsg}</p>}
+              </div>
+            )}
+            {!deviceCode && deviceMsg && <p className="hint">{deviceMsg}</p>}
 
             <div className="divider">of offline</div>
 
