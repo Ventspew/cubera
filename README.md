@@ -6,7 +6,7 @@ Gebouwd met **Tauri 2 + React + TypeScript**.
 
 ## Installeren (macOS)
 
-1. Download de nieuwste **`.dmg`** van [Releases](https://github.com/macdirtycow/cubera/releases).
+1. Download de nieuwste **`.dmg`** van [Releases](https://github.com/Ventspew/cubera/releases).
 2. Open de disk image.
 3. Sleep **Cubera** naar **Applications**.
 4. Start Cubera (bij eerste start: Systeeminstellingen → Privacy → openen toestaan als macOS dat vraagt).
