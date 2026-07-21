@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="ore" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F0C08A"/>
+      <stop offset="0.4" stop-color="#D4894A"/>
+      <stop offset="1" stop-color="#7A4520"/>
+    </linearGradient>
+    <linearGradient id="facet" x1="20" y1="12" x2="48" y2="52" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2A221C"/>
+      <stop offset="1" stop-color="#100E0C"/>
+    </linearGradient>
+  </defs>
+  <!-- Fractured mineral plate — ownable Cubera mark -->
+  <path
+    d="M8 18 L32 4 L56 18 L56 42 L32 60 L8 42 Z"
+    fill="url(#facet)"
+    stroke="rgba(232,168,106,0.35)"
+    stroke-width="1.25"
+  />
+  <!-- Outer crystal facets -->
+  <path d="M32 4 L56 18 L32 30 L8 18 Z" fill="rgba(232,168,106,0.06)" />
+  <path d="M8 18 L32 30 L32 60 L8 42 Z" fill="rgba(0,0,0,0.28)" />
+  <path d="M56 18 L32 30 L32 60 L56 42 Z" fill="rgba(212,137,74,0.08)" />
+  <!-- Fractured C monogram cut -->
+  <path
+    d="M40.5 22.5c-1.4-2.8-4.6-4.7-8.3-4.7-5.4 0-9.5 3.9-9.5 9.7v9c0 5.8 4.1 9.7 9.5 9.7 3.7 0 6.9-1.9 8.3-4.7"
+    stroke="url(#ore)"
+    stroke-width="3.4"
+    stroke-linecap="round"
+    fill="none"
+  />
+  <!-- Ore vein fracture -->
+  <path
+    d="M22 28 L30 33 L28 40 L36 44"
+    stroke="#E8A86A"
+    stroke-width="1.4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity="0.85"
+  />
+  <circle cx="36" cy="44" r="1.8" fill="#E8A86A"/>
+</svg>
