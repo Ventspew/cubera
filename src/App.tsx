@@ -127,14 +127,6 @@ function PlateGeometry() {
   );
 }
 
-function skinUrl(uuid: string) {
-  return `https://crafatar.com/avatars/${uuid}?size=64&overlay`;
-}
-
-function isOfflineUuid(uuid: string) {
-  return !uuid || uuid.startsWith("00000000") || uuid.includes("-0000-");
-}
-
 function instanceMeta(id: string) {
   const lower = id.toLowerCase();
   if (lower.includes("fabric")) return { loader: "Fabric", kind: "Modded" };
@@ -150,23 +142,46 @@ function SkinAvatar({
   account: Account | null | undefined;
   sizeClass?: string;
 }) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSrc(null);
+    if (!account || account.offline) return;
+
+    invoke<string>("get_player_skin", { uuid: account.uuid })
+      .then((dataUrl) => {
+        if (!cancelled) setSrc(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setSrc(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [account?.uuid, account?.offline]);
+
   if (!account) {
     return <div className={`${sizeClass} placeholder`} aria-hidden>—</div>;
   }
-  if (account.offline || isOfflineUuid(account.uuid)) {
+
+  if (account.offline || !src) {
     return (
       <div className={`${sizeClass} placeholder`} aria-hidden>
         {account.name.slice(0, 1).toUpperCase()}
       </div>
     );
   }
+
   return (
     <img
-      className={sizeClass}
-      src={skinUrl(account.uuid)}
+      className={`${sizeClass} skin-img`}
+      src={src}
       alt=""
       width={64}
       height={64}
+      draggable={false}
     />
   );
 }

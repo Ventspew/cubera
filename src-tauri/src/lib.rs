@@ -6,6 +6,7 @@ mod loaders;
 mod manifest;
 mod modrinth;
 mod paths;
+mod skin;
 
 use paths::{ensure_dirs, load_settings, save_settings, Settings};
 use serde::Serialize;
@@ -197,6 +198,11 @@ fn list_mods(instance_id: String) -> Result<Vec<String>, String> {
     modrinth::list_instance_mods(&instance_id)
 }
 
+#[tauri::command]
+async fn get_player_skin(uuid: String) -> Result<String, String> {
+    skin::get_player_avatar_data_url(&uuid).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = ensure_dirs();
@@ -227,6 +233,7 @@ pub fn run() {
             get_mod_versions,
             install_mod,
             list_mods,
+            get_player_skin,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cubera");
