@@ -3,7 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use uuid::Uuid;
 
-/// Prism Launcher's public MSA client ID (Azure app registered for Minecraft launchers).
+/// Default MSA client: Prism Launcher's public Azure app.
+/// Microsoft's consent screen therefore shows "Prism Launcher".
+/// Cubera does **not** ship Prism's codebase — only this public client ID,
+/// because a custom Azure app must be registered (+ Minecraft API permission)
+/// to display "Cubera" instead. Override via settings later if needed.
 const MSA_CLIENT_ID: &str = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb";
 /// Scope used by Prism / MultiMC-family launchers.
 const MSA_SCOPE: &str = "XboxLive.signin offline_access";

@@ -179,6 +179,16 @@ async function tryInvoke<T>(cmd: string, args?: Record<string, unknown>): Promis
   }
 }
 
+/** Invoke a command that returns void/`()` — success is no throw. */
+async function invokeOk(cmd: string, args?: Record<string, unknown>): Promise<boolean> {
+  try {
+    await invoke(cmd, args);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("play");
   const [manifest, setManifest] = useState<VersionManifest | null>(null);
@@ -202,6 +212,11 @@ export default function App() {
   const [deviceMsg, setDeviceMsg] = useState<string | null>(null);
   const [deviceCode, setDeviceCode] = useState<string | null>(null);
   const [deviceUri, setDeviceUri] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{
+    title: string;
+    body: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
 
   const [modQuery, setModQuery] = useState("");
   const [modHits, setModHits] = useState<ModHit[]>([]);
@@ -419,8 +434,8 @@ export default function App() {
 
   async function setActiveAccount(uuid: string) {
     if (!settings) return;
-    const viaCmd = await tryInvoke("set_active_account", { uuid });
-    if (viaCmd !== null) {
+    const ok = await invokeOk("set_active_account", { uuid });
+    if (ok) {
       await refresh();
       showStatus("Actief account bijgewerkt");
       return;
@@ -429,29 +444,28 @@ export default function App() {
     showStatus("Actief account bijgewerkt");
   }
 
-  async function removeAccount(uuid: string) {
+  function requestRemoveAccount(uuid: string) {
     if (!settings) return;
     const account = settings.accounts.find((a) => a.uuid === uuid);
-    if (
-      !window.confirm(
-        `Account “${account?.name ?? uuid}” verwijderen? Dit kan niet ongedaan worden gemaakt.`,
-      )
-    ) {
-      return;
-    }
-    const viaCmd = await tryInvoke("remove_account", { uuid });
-    if (viaCmd !== null) {
-      await refresh();
-      showStatus("Account verwijderd");
-      return;
-    }
-    const accounts = settings.accounts.filter((a) => a.uuid !== uuid);
-    const active =
-      settings.active_account === uuid
-        ? accounts[accounts.length - 1]?.uuid ?? null
-        : settings.active_account;
-    await persistSettings({ ...settings, accounts, active_account: active });
-    showStatus("Account verwijderd");
+    setConfirmAction({
+      title: "Account verwijderen",
+      body: `Account “${account?.name ?? uuid}” verwijderen? Dit kan niet ongedaan worden gemaakt.`,
+      onConfirm: async () => {
+        const ok = await invokeOk("remove_account", { uuid });
+        if (ok) {
+          await refresh();
+          showStatus("Account verwijderd");
+          return;
+        }
+        const accounts = settings.accounts.filter((a) => a.uuid !== uuid);
+        const active =
+          settings.active_account === uuid
+            ? (accounts[accounts.length - 1]?.uuid ?? null)
+            : settings.active_account;
+        await persistSettings({ ...settings, accounts, active_account: active });
+        showStatus("Account verwijderd");
+      },
+    });
   }
 
   async function openInstanceFolder() {
@@ -462,17 +476,23 @@ export default function App() {
     }
   }
 
-  async function deleteInstance() {
+  function deleteInstance() {
     if (!selected) return;
-    if (!window.confirm(`Instance “${selected}” verwijderen?`)) return;
-    const ok = await tryInvoke("delete_instance", { instanceId: selected });
-    if (ok === null) {
-      showStatus("Instance verwijderen is nog niet beschikbaar", true);
-      return;
-    }
-    showStatus(`Instance verwijderd: ${selected}`);
-    setSelected("");
-    await refresh();
+    const id = selected;
+    setConfirmAction({
+      title: "Instance verwijderen",
+      body: `Instance “${id}” verwijderen?`,
+      onConfirm: async () => {
+        const ok = await invokeOk("delete_instance", { instanceId: id });
+        if (!ok) {
+          showStatus("Instance verwijderen is nog niet beschikbaar", true);
+          return;
+        }
+        showStatus(`Instance verwijderd: ${id}`);
+        setSelected("");
+        await refresh();
+      },
+    });
   }
 
   async function searchMods() {
@@ -526,21 +546,22 @@ export default function App() {
     }
   }
 
-  async function deleteMod(filename: string) {
+  function deleteMod(filename: string) {
     if (!selected) return;
-    if (!window.confirm(`Mod “${filename}” verwijderen van deze instance?`)) {
-      return;
-    }
-    const ok = await tryInvoke("delete_mod", {
-      instanceId: selected,
-      filename,
+    const instanceId = selected;
+    setConfirmAction({
+      title: "Mod verwijderen",
+      body: `Mod “${filename}” verwijderen van deze instance?`,
+      onConfirm: async () => {
+        const ok = await invokeOk("delete_mod", { instanceId, filename });
+        if (!ok) {
+          showStatus("Mod verwijderen is nog niet beschikbaar", true);
+          return;
+        }
+        showStatus(`Mod verwijderd: ${filename}`);
+        setInstanceMods(await invoke("list_mods", { instanceId }));
+      },
     });
-    if (ok === null) {
-      showStatus("Mod verwijderen is nog niet beschikbaar", true);
-      return;
-    }
-    showStatus(`Mod verwijderd: ${filename}`);
-    setInstanceMods(await invoke("list_mods", { instanceId: selected }));
   }
 
   async function saveMemory(mb: number) {
@@ -874,7 +895,10 @@ export default function App() {
         {tab === "account" && (
           <section className="panel" key="account">
             <h2 className="section-head">Account</h2>
-            <p className="section-sub">Microsoft-login of een offline-profiel.</p>
+            <p className="section-sub">
+              Microsoft-login of een offline-profiel. Microsoft kan kort “Prism
+              Launcher” tonen — dat is alleen hun publieke login-app, niet Cubera-code.
+            </p>
 
             <button type="button" className="cta" disabled={busy} onClick={microsoftLogin}>
               {busy && deviceCode ? "Wachten op Microsoft…" : "Inloggen met Microsoft"}
@@ -949,7 +973,7 @@ export default function App() {
                       <button
                         type="button"
                         className="btn-sm danger"
-                        onClick={() => removeAccount(a.uuid)}
+                        onClick={() => requestRemoveAccount(a.uuid)}
                       >
                         Verwijderen
                       </button>
@@ -1054,6 +1078,39 @@ export default function App() {
           <footer className={statusError ? "status error" : "status"}>{status}</footer>
         )}
       </main>
+
+      {confirmAction && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+            <h3 id="confirm-title">{confirmAction.title}</h3>
+            <p>{confirmAction.body}</p>
+            <div className="row">
+              <button
+                type="button"
+                className="cta secondary"
+                onClick={() => setConfirmAction(null)}
+              >
+                Annuleren
+              </button>
+              <button
+                type="button"
+                className="cta danger-cta"
+                onClick={async () => {
+                  const action = confirmAction;
+                  setConfirmAction(null);
+                  try {
+                    await action.onConfirm();
+                  } catch (e) {
+                    showStatus(String(e), true);
+                  }
+                }}
+              >
+                Verwijderen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
