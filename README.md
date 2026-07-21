@@ -9,7 +9,14 @@ Gebouwd met **Tauri 2 + React + TypeScript**.
 1. Download de nieuwste **`.dmg`** van [Releases](https://github.com/Ventspew/cubera/releases).
 2. Open de disk image.
 3. Sleep **Cubera** naar **Applications**.
-4. Start Cubera (bij eerste start: Systeeminstellingen → Privacy → openen toestaan als macOS dat vraagt).
+4. Als macOS de app weigert / naar de Prullenmand wil:
+
+```bash
+xattr -cr /Applications/Cubera.app
+open /Applications/Cubera.app
+```
+
+Of rechtermuisklik → **Open**.
 
 Java 17+ is nodig om te spelen:
 
