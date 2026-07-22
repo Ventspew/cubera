@@ -91,6 +91,12 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
     fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
     fs::create_dir_all(game_dir.join("mods")).map_err(|e| e.to_string())?;
 
+    if settings.ingame_branding {
+        crate::branding::install_ingame_branding(&game_dir)?;
+    } else {
+        let _ = crate::branding::remove_branding_from_options(&game_dir);
+    }
+
     let natives = natives_dir_for(version_id);
     fs::create_dir_all(&natives).map_err(|e| e.to_string())?;
     extract_natives(&merged.libraries, &natives)?;

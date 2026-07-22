@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
-type Tab = "play" | "install" | "mods" | "account" | "settings";
+type Tab = "home" | "play" | "install" | "mods" | "account" | "settings";
 
 type VersionInfo = {
   id: string;
@@ -35,6 +35,18 @@ type Settings = {
   height?: number;
   fullscreen?: boolean;
   jvm_args?: string;
+  ingame_branding?: boolean;
+};
+
+type AppInfo = {
+  name: string;
+  version: string;
+  tagline: string;
+};
+
+type LaunchLog = {
+  stdout: string;
+  stderr: string;
 };
 
 type ProgressEvent = {
@@ -63,12 +75,70 @@ type ModVersion = {
 };
 
 const TABS: { id: Tab; label: string; short: string }[] = [
-  { id: "play", label: "Spelen", short: "Spel" },
-  { id: "install", label: "Installeren", short: "Inst" },
+  { id: "home", label: "Home", short: "Home" },
+  { id: "play", label: "Play", short: "Play" },
+  { id: "install", label: "Install", short: "Inst" },
   { id: "mods", label: "Mods", short: "Mods" },
   { id: "account", label: "Account", short: "Acc" },
-  { id: "settings", label: "Instellingen", short: "Set" },
+  { id: "settings", label: "Settings", short: "Set" },
 ];
+
+function CuberaLogo({ size = 32, className = "" }: { size?: number; className?: string }) {
+  return (
+    <svg
+      className={`cubera-logo ${className}`.trim()}
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="none"
+      aria-hidden
+    >
+      <defs>
+        <linearGradient id="logo-ore" x1="6" y1="4" x2="58" y2="60" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#F5D4A8" />
+          <stop offset="0.35" stopColor="#E8A86A" />
+          <stop offset="0.65" stopColor="#D4894A" />
+          <stop offset="1" stopColor="#6B3818" />
+        </linearGradient>
+        <linearGradient id="logo-facet" x1="18" y1="10" x2="50" y2="54" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#2E2620" />
+          <stop offset="0.55" stopColor="#1A1612" />
+          <stop offset="1" stopColor="#0A0908" />
+        </linearGradient>
+        <radialGradient id="logo-glow" cx="32" cy="32" r="28" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#D4894A" stopOpacity="0.28" />
+          <stop offset="1" stopColor="#D4894A" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="32" cy="32" r="30" fill="url(#logo-glow)" className="logo-glow-ring" />
+      <path
+        d="M8 18 L32 4 L56 18 L56 42 L32 60 L8 42 Z"
+        fill="url(#logo-facet)"
+        stroke="rgba(232,168,106,0.45)"
+        strokeWidth="1.35"
+      />
+      <path d="M32 4 L56 18 L32 30 L8 18 Z" fill="rgba(245,212,168,0.12)" />
+      <path d="M8 18 L32 30 L32 60 L8 42 Z" fill="rgba(0,0,0,0.32)" />
+      <path d="M56 18 L32 30 L32 60 L56 42 Z" fill="rgba(212,137,74,0.14)" />
+      <path
+        d="M40.5 22.5c-1.4-2.8-4.6-4.7-8.3-4.7-5.4 0-9.5 3.9-9.5 9.7v9c0 5.8 4.1 9.7 9.5 9.7 3.7 0 6.9-1.9 8.3-4.7"
+        stroke="url(#logo-ore)"
+        strokeWidth="3.6"
+        strokeLinecap="round"
+        className="logo-monogram"
+      />
+      <path
+        d="M21 27 L29.5 32.5 L27.5 39.5 L35.5 43.5 L39 48"
+        stroke="#F0C08A"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="logo-vein"
+      />
+      <circle cx="39" cy="48" r="2" fill="#F0C08A" className="logo-vein-dot" />
+    </svg>
+  );
+}
 
 function NavGlyph({ id }: { id: Tab }) {
   const common = {
@@ -80,6 +150,13 @@ function NavGlyph({ id }: { id: Tab }) {
     "aria-hidden": true as const,
   };
   switch (id) {
+    case "home":
+      return (
+        <svg {...common}>
+          <path d="M2 6.5 7 2.5 12 6.5V12H2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+          <path d="M5 12V9h4v3" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+        </svg>
+      );
     case "play":
       return (
         <svg {...common}>
@@ -131,7 +208,7 @@ function instanceMeta(id: string) {
   const lower = id.toLowerCase();
   if (lower.includes("fabric")) return { loader: "Fabric", kind: "Modded" };
   if (lower.includes("forge")) return { loader: "Forge", kind: "Modded" };
-  if (!id) return { loader: "—", kind: "Geen instance" };
+  if (!id) return { loader: "—", kind: "No instance" };
   return { loader: "Vanilla", kind: "Release" };
 }
 
@@ -205,7 +282,7 @@ async function invokeOk(cmd: string, args?: Record<string, unknown>): Promise<bo
 }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("play");
+  const [tab, setTab] = useState<Tab>("home");
   const [manifest, setManifest] = useState<VersionManifest | null>(null);
   const [installed, setInstalled] = useState<string[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -241,6 +318,9 @@ export default function App() {
   const [resH, setResH] = useState(720);
   const [fullscreen, setFullscreen] = useState(false);
   const [jvmArgs, setJvmArgs] = useState("");
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [launchLog, setLaunchLog] = useState<LaunchLog | null>(null);
+  const [logLoading, setLogLoading] = useState(false);
 
   const activeAccount = useMemo(() => {
     if (!settings) return null;
@@ -281,6 +361,7 @@ export default function App() {
 
   useEffect(() => {
     refresh().catch((e) => showStatus(String(e), true));
+    invoke<AppInfo>("get_app_info").then(setAppInfo).catch(() => {});
     const unlisten = listen<ProgressEvent>("install-progress", (e) => {
       setProgress(e.payload);
       showStatus(e.payload.message);
@@ -311,7 +392,7 @@ export default function App() {
   async function onLaunch() {
     if (!selected) return;
     setBusy(true);
-    showStatus("Minecraft starten…");
+    showStatus("Starting Minecraft…");
     try {
       const msg = await invoke<string>("launch_instance", { versionId: selected });
       if (settings) {
@@ -329,7 +410,7 @@ export default function App() {
     if (!manifest || !installMc) return;
     const info = manifest.versions.find((v) => v.id === installMc);
     if (!info) {
-      showStatus("Versie niet gevonden in manifest", true);
+      showStatus("Version not found in manifest", true);
       return;
     }
     setBusy(true);
@@ -354,7 +435,7 @@ export default function App() {
           forgeFull: forgePick,
         });
       }
-      showStatus(`Geïnstalleerd: ${id}`);
+      showStatus(`Installed: ${id}`);
       await refresh();
       setSelected(id);
       setTab("play");
@@ -409,7 +490,7 @@ export default function App() {
       setDeviceCode(code.user_code);
       setDeviceUri(code.verification_uri);
       setDeviceMsg(
-        "Open de link, vul de code in en wacht tot Cubera je account ophaalt…",
+        "Open the link, enter the code, and wait for Cubera to fetch your account…",
       );
       await openUrl(code.verification_uri);
       try {
@@ -424,7 +505,7 @@ export default function App() {
       setDeviceMsg(null);
       setDeviceCode(null);
       setDeviceUri(null);
-      showStatus(`Ingelogd als ${account.name}`);
+      showStatus(`Signed in as ${account.name}`);
       await refresh();
       setTab("play");
     } catch (e) {
@@ -439,7 +520,7 @@ export default function App() {
       const account = await invoke<Account>("add_offline_account", {
         name: offlineName,
       });
-      showStatus(`Offline-account ${account.name}`);
+      showStatus(`Offline account ${account.name}`);
       setOfflineName("");
       await refresh();
     } catch (e) {
@@ -452,24 +533,24 @@ export default function App() {
     const ok = await invokeOk("set_active_account", { uuid });
     if (ok) {
       await refresh();
-      showStatus("Actief account bijgewerkt");
+      showStatus(`Active account updated`);
       return;
     }
     await persistSettings({ ...settings, active_account: uuid });
-    showStatus("Actief account bijgewerkt");
+    showStatus("Active account updated");
   }
 
   function requestRemoveAccount(uuid: string) {
     if (!settings) return;
     const account = settings.accounts.find((a) => a.uuid === uuid);
     setConfirmAction({
-      title: "Account verwijderen",
-      body: `Account “${account?.name ?? uuid}” verwijderen? Dit kan niet ongedaan worden gemaakt.`,
+      title: "Remove account",
+      body: `Remove account “${account?.name ?? uuid}”? This cannot be undone.`,
       onConfirm: async () => {
         const ok = await invokeOk("remove_account", { uuid });
         if (ok) {
           await refresh();
-          showStatus("Account verwijderd");
+          showStatus("Account removed");
           return;
         }
         const accounts = settings.accounts.filter((a) => a.uuid !== uuid);
@@ -478,7 +559,7 @@ export default function App() {
             ? (accounts[accounts.length - 1]?.uuid ?? null)
             : settings.active_account;
         await persistSettings({ ...settings, accounts, active_account: active });
-        showStatus("Account verwijderd");
+        showStatus("Account removed");
       },
     });
   }
@@ -487,7 +568,7 @@ export default function App() {
     if (!selected) return;
     const ok = await tryInvoke("open_instance_folder", { instanceId: selected });
     if (ok === null) {
-      showStatus("Map openen is nog niet beschikbaar", true);
+      showStatus("Opening folder is not available yet", true);
     }
   }
 
@@ -495,15 +576,15 @@ export default function App() {
     if (!selected) return;
     const id = selected;
     setConfirmAction({
-      title: "Instance verwijderen",
-      body: `Instance “${id}” verwijderen?`,
+      title: "Delete instance",
+      body: `Delete instance “${id}”?`,
       onConfirm: async () => {
         const ok = await invokeOk("delete_instance", { instanceId: id });
         if (!ok) {
-          showStatus("Instance verwijderen is nog niet beschikbaar", true);
+          showStatus("Deleting instances is not available yet", true);
           return;
         }
-        showStatus(`Instance verwijderd: ${id}`);
+        showStatus(`Instance deleted: ${id}`);
         setSelected("");
         await refresh();
       },
@@ -546,13 +627,13 @@ export default function App() {
         loader: loaderHint,
       });
       const file = versions[0]?.files.find((f) => f.primary) ?? versions[0]?.files[0];
-      if (!file) throw new Error("Geen downloadbaar bestand");
+      if (!file) throw new Error("No downloadable file found");
       await invoke("install_mod", {
         instanceId: selected,
         fileUrl: file.url,
         filename: file.filename,
       });
-      showStatus(`Geïnstalleerd: ${file.filename}`);
+      showStatus(`Installed: ${file.filename}`);
       setInstanceMods(await invoke("list_mods", { instanceId: selected }));
     } catch (e) {
       showStatus(String(e), true);
@@ -565,15 +646,15 @@ export default function App() {
     if (!selected) return;
     const instanceId = selected;
     setConfirmAction({
-      title: "Mod verwijderen",
-      body: `Mod “${filename}” verwijderen van deze instance?`,
+      title: "Remove mod",
+      body: `Remove mod “${filename}” from this instance?`,
       onConfirm: async () => {
         const ok = await invokeOk("delete_mod", { instanceId, filename });
         if (!ok) {
-          showStatus("Mod verwijderen is nog niet beschikbaar", true);
+          showStatus("Removing mods is not available yet", true);
           return;
         }
-        showStatus(`Mod verwijderd: ${filename}`);
+        showStatus(`Mod removed: ${filename}`);
         setInstanceMods(await invoke("list_mods", { instanceId }));
       },
     });
@@ -602,7 +683,31 @@ export default function App() {
       jvm_args: jvmArgs,
     };
     await persistSettings(next);
-    showStatus("Instellingen opgeslagen");
+    showStatus("Settings saved");
+  }
+
+  async function loadLaunchLog() {
+    if (!selected) return;
+    setLogLoading(true);
+    try {
+      const log = await invoke<LaunchLog>("get_launch_log", { instanceId: selected });
+      setLaunchLog(log);
+    } catch (e) {
+      showStatus(String(e), true);
+    } finally {
+      setLogLoading(false);
+    }
+  }
+
+  async function saveIngameBranding(enabled: boolean) {
+    if (!settings) return;
+    await persistSettings({ ...settings, ingame_branding: enabled });
+    showStatus(enabled ? "In-game branding enabled" : "In-game branding disabled");
+  }
+
+  async function openDataFolder() {
+    const ok = await tryInvoke("open_data_folder");
+    if (ok === null) showStatus("Failed to open data folder", true);
   }
 
   const progressPct = progress?.total
@@ -616,11 +721,11 @@ export default function App() {
     <div className="shell">
       <aside className="rail">
         <div className="brand">
-          <img src="/cubera.svg" alt="" width={32} height={32} />
+          <CuberaLogo size={32} className="brand-mark" />
           <span>Cubera</span>
           <span className="brand-text-mobile">CB</span>
         </div>
-        <nav aria-label="Hoofdnavigatie">
+        <nav aria-label="Main navigation">
           {TABS.map(({ id, label, short }) => (
             <button
               key={id}
@@ -645,10 +750,10 @@ export default function App() {
             <SkinAvatar account={activeAccount} />
             <div className="rail-meta">
               <p className="name">
-                {activeAccount ? activeAccount.name : "Niet ingelogd"}
+                {activeAccount ? activeAccount.name : "Not signed in"}
               </p>
               <p className={javaPath ? "java ok" : "java"}>
-                {javaPath ? "Java gereed" : "Java ontbreekt"}
+                {javaPath ? "Java ready" : "Java missing"}
               </p>
             </div>
           </button>
@@ -656,16 +761,102 @@ export default function App() {
       </aside>
 
       <main className="stage">
+        {tab === "home" && (
+          <section className="home-dashboard" key="home">
+            <header className="home-hero">
+              <div className="home-mark">
+                <CuberaLogo size={72} className="hero-mark" />
+                <div>
+                  <h1>Cubera</h1>
+                  <p className="home-version">
+                    v{appInfo?.version ?? "0.1.0"} — {appInfo?.tagline ?? "Minecraft launcher"}
+                  </p>
+                </div>
+              </div>
+              <p className="home-intro">
+                Welcome back{activeAccount ? `, ${activeAccount.name}` : ""}. Your mineral workbench for
+                vanilla, Fabric, Forge, and Modrinth — with in-game Cubera branding.
+              </p>
+            </header>
+
+            <div className="home-stats">
+              <div className="stat-card">
+                <span className="stat-label">Instances</span>
+                <strong>{installed.length}</strong>
+              </div>
+              <div className="stat-card">
+                <span className="stat-label">Mods (active)</span>
+                <strong>{instanceMods.length}</strong>
+              </div>
+              <div className="stat-card">
+                <span className="stat-label">Java</span>
+                <strong className={javaPath ? "ok" : "warn"}>{javaPath ? "Gereed" : "Ontbreekt"}</strong>
+              </div>
+              <div className="stat-card">
+                <span className="stat-label">Branding</span>
+                <strong>{settings?.ingame_branding !== false ? "On" : "Off"}</strong>
+              </div>
+            </div>
+
+            <div className="home-actions">
+              <button type="button" className="home-card" onClick={() => setTab("play")}>
+                <span className="card-eyebrow">Play</span>
+                <strong>{selected || "Choose instance"}</strong>
+                <span>{launchReady ? "Ready to launch" : "Account or instance required"}</span>
+              </button>
+              <button type="button" className="home-card" onClick={() => setTab("install")}>
+                <span className="card-eyebrow">Install</span>
+                <strong>{manifest?.latest.release ?? "—"}</strong>
+                <span>Vanilla, Fabric, or Forge</span>
+              </button>
+              <button type="button" className="home-card" onClick={() => setTab("mods")}>
+                <span className="card-eyebrow">Mods</span>
+                <strong>Modrinth</strong>
+                <span>Search &amp; install</span>
+              </button>
+              <button type="button" className="home-card" onClick={() => setTab("account")}>
+                <span className="card-eyebrow">Account</span>
+                <strong>{activeAccount?.name ?? "Sign in"}</strong>
+                <span>{activeAccount?.offline ? "Offline profile" : "Microsoft or offline"}</span>
+              </button>
+            </div>
+
+            <div className="home-panels">
+              <div className="home-panel">
+                <h3>What&apos;s new</h3>
+                <ul className="plain changelog">
+                  <li>Refined Cubera logo with copper glow and facets</li>
+                  <li>In-game branding via resource pack (subtitle &amp; splashes)</li>
+                  <li>Home dashboard with quick stats</li>
+                  <li>Launch log viewer in Settings</li>
+                </ul>
+              </div>
+              <div className="home-panel accent">
+                <h3>Quick launch</h3>
+                <p className="hint">Instance: <strong>{selected || "none"}</strong></p>
+                <button
+                  type="button"
+                  className="cta launch"
+                  disabled={!launchReady}
+                  onClick={onLaunch}
+                >
+                  {busy ? "Working…" : "Launch Minecraft"}
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
         {tab === "play" && (
           <section className="play-hero" key="play">
             <div className="play-left">
               <div className="play-brand">
                 <div className="mark-row">
-                  <img src="/cubera.svg" alt="" width={52} height={52} />
+                  <CuberaLogo size={56} className="hero-mark" />
                   <h1>Cubera</h1>
                 </div>
                 <p className="tagline">
-                  Precisie-instrument voor macOS — vanilla, Fabric, Forge &amp; Modrinth.
+                  Precision instrument for macOS — vanilla, Fabric, Forge &amp; Modrinth.
                 </p>
               </div>
 
@@ -678,7 +869,7 @@ export default function App() {
                       onChange={(e) => setSelected(e.target.value)}
                     >
                       {installed.length === 0 && (
-                        <option value="">Nog geen installs — ga naar Installeren</option>
+                        <option value="">No installs yet — go to Install</option>
                       )}
                       {installed.map((id) => (
                         <option key={id} value={id}>
@@ -693,34 +884,34 @@ export default function App() {
                     disabled={busy || !selected || !activeAccount}
                     onClick={onLaunch}
                   >
-                    {busy ? "Bezig…" : "Starten"}
+                    {busy ? "Working…" : "Launch"}
                   </button>
                 </div>
 
                 {selected && (
                   <div className="instance-actions">
                     <button type="button" className="cta ghost" onClick={openInstanceFolder}>
-                      Map openen
+                      Open folder
                     </button>
                     <button type="button" className="cta ghost" onClick={deleteInstance}>
-                      Verwijderen
+                      Delete
                     </button>
                   </div>
                 )}
 
                 {!activeAccount && (
                   <p className="hint">
-                    Voeg eerst een account toe (Microsoft of offline) onder Account.
+                    Add an account first (Microsoft or offline) under Account.
                   </p>
                 )}
               </div>
             </div>
 
-            <aside className="instance-plate" aria-label="Instance-overzicht">
+            <aside className="instance-plate" aria-label="Instance overview">
               <PlateGeometry />
               <div>
-                <p className="plate-eyebrow">Geselecteerde instance</p>
-                <h2 className="plate-title">{selected || "Geen instance"}</h2>
+                <p className="plate-eyebrow">Selected instance</p>
+                <h2 className="plate-title">{selected || "No instance"}</h2>
                 <div className="plate-meta">
                   <span className="meta-chip accent">{selectedMeta.loader}</span>
                   <span className="meta-chip">{selectedMeta.kind}</span>
@@ -736,18 +927,18 @@ export default function App() {
                 <div className="play-glance">
                   <SkinAvatar account={activeAccount} sizeClass="skin" />
                   <div className="info">
-                    <strong>{activeAccount?.name ?? "Geen account"}</strong>
+                    <strong>{activeAccount?.name ?? "No account"}</strong>
                     <span>
                       {activeAccount
                         ? activeAccount.offline
                           ? "Offline"
                           : "Microsoft"
-                        : "Meld je aan om te spelen"}
+                        : "Sign in to play"}
                     </span>
                   </div>
                 </div>
                 <span className={`plate-status ${launchReady ? "ready" : "warn"}`}>
-                  {launchReady ? "Klaar" : "Wacht"}
+                  {launchReady ? "Ready" : "Waiting"}
                 </span>
               </div>
             </aside>
@@ -756,8 +947,8 @@ export default function App() {
 
         {tab === "install" && (
           <section className="panel" key="install">
-            <h2 className="section-head">Installeren</h2>
-            <p className="section-sub">Kies een Minecraft-versie en loader.</p>
+            <h2 className="section-head">Install</h2>
+            <p className="section-sub">Choose a Minecraft version and loader.</p>
 
             <label>
               Minecraft
@@ -811,7 +1002,7 @@ export default function App() {
             )}
 
             <button type="button" className="cta" disabled={busy} onClick={onInstall}>
-              {busy ? "Bezig met installeren…" : "Installeren"}
+              {busy ? "Installing…" : "Install"}
             </button>
 
             {progress && (
@@ -831,7 +1022,7 @@ export default function App() {
           <section className="panel" key="mods">
             <h2 className="section-head">Mods</h2>
             <p className="section-sub">
-              Zoek op Modrinth voor instance{" "}
+              Search Modrinth for instance{" "}
               <strong style={{ color: "var(--text)" }}>{selected || "—"}</strong>
             </p>
 
@@ -839,7 +1030,7 @@ export default function App() {
               <input
                 value={modQuery}
                 onChange={(e) => setModQuery(e.target.value)}
-                placeholder="Zoek op Modrinth…"
+                placeholder="Search Modrinth…"
                 onKeyDown={(e) => e.key === "Enter" && searchMods()}
               />
               <button
@@ -848,7 +1039,7 @@ export default function App() {
                 disabled={busy}
                 onClick={searchMods}
               >
-                Zoeken
+                Search
               </button>
             </div>
 
@@ -856,7 +1047,7 @@ export default function App() {
               {modHits.length === 0 && (
                 <li>
                   <div className="mod-body">
-                    <p style={{ margin: 0 }}>Nog geen resultaten — typ een zoekterm.</p>
+                    <p style={{ margin: 0 }}>No results yet — enter a search term.</p>
                   </div>
                 </li>
               )}
@@ -877,7 +1068,7 @@ export default function App() {
                     disabled={busy || !selected}
                     onClick={() => installModFromHit(hit)}
                   >
-                    Installeren
+                    Install
                   </button>
                 </li>
               ))}
@@ -885,7 +1076,7 @@ export default function App() {
 
             {instanceMods.length > 0 && (
               <div className="list-block">
-                <h3>Geïnstalleerd</h3>
+                <h3>Installed</h3>
                 <ul className="plain mod-installed">
                   {instanceMods.map((m) => (
                     <li key={m}>
@@ -896,7 +1087,7 @@ export default function App() {
                           className="btn-sm danger"
                           onClick={() => deleteMod(m)}
                         >
-                          Verwijderen
+                          Remove
                         </button>
                       </div>
                     </li>
@@ -911,16 +1102,16 @@ export default function App() {
           <section className="panel" key="account">
             <h2 className="section-head">Account</h2>
             <p className="section-sub">
-              Microsoft-login of een offline-profiel. Microsoft kan kort “Prism
-              Launcher” tonen — dat is alleen hun publieke login-app, niet Cubera-code.
+              Microsoft sign-in or an offline profile. Microsoft may briefly show “Prism
+              Launcher” — that is only their public login app, not Cubera code.
             </p>
 
             <button type="button" className="cta" disabled={busy} onClick={microsoftLogin}>
-              {busy && deviceCode ? "Wachten op Microsoft…" : "Inloggen met Microsoft"}
+              {busy && deviceCode ? "Waiting for Microsoft…" : "Sign in with Microsoft"}
             </button>
             {deviceCode && (
               <div className="ms-login-box">
-                <p className="hint">Ga naar microsoft.com/link en voer deze code in:</p>
+                <p className="hint">Go to microsoft.com/link and enter this code:</p>
                 <p className="ms-code">{deviceCode}</p>
                 <div className="row">
                   <button
@@ -928,14 +1119,14 @@ export default function App() {
                     className="cta secondary"
                     onClick={() => deviceUri && openUrl(deviceUri)}
                   >
-                    Open loginpagina
+                    Open sign-in page
                   </button>
                   <button
                     type="button"
                     className="cta secondary"
                     onClick={() => navigator.clipboard.writeText(deviceCode)}
                   >
-                    Kopieer code
+                    Copy code
                   </button>
                 </div>
                 {deviceMsg && <p className="hint">{deviceMsg}</p>}
@@ -943,23 +1134,23 @@ export default function App() {
             )}
             {!deviceCode && deviceMsg && <p className="hint">{deviceMsg}</p>}
 
-            <div className="divider">of offline</div>
+            <div className="divider">or offline</div>
 
             <div className="row">
               <input
                 value={offlineName}
                 onChange={(e) => setOfflineName(e.target.value)}
-                placeholder="Offline gebruikersnaam"
+                placeholder="Offline username"
                 maxLength={16}
               />
               <button type="button" className="cta secondary" onClick={offlineLogin}>
-                Toevoegen
+                Add
               </button>
             </div>
 
             <ul className="plain">
               {settings?.accounts.length === 0 && (
-                <li>Nog geen accounts.</li>
+                <li>No accounts yet.</li>
               )}
               {settings?.accounts.map((a) => {
                 const isActive = a.uuid === settings.active_account;
@@ -970,7 +1161,7 @@ export default function App() {
                       <div className="meta">
                         <strong>
                           {a.name}
-                          {isActive ? " · actief" : ""}
+                          {isActive ? " · active" : ""}
                         </strong>
                         <span>{a.offline ? "Offline" : "Microsoft"}</span>
                       </div>
@@ -982,7 +1173,7 @@ export default function App() {
                           className="btn-sm"
                           onClick={() => setActiveAccount(a.uuid)}
                         >
-                          Activeren
+                          Activate
                         </button>
                       )}
                       <button
@@ -990,7 +1181,7 @@ export default function App() {
                         className="btn-sm danger"
                         onClick={() => requestRemoveAccount(a.uuid)}
                       >
-                        Verwijderen
+                        Remove
                       </button>
                     </div>
                   </li>
@@ -1002,12 +1193,12 @@ export default function App() {
 
         {tab === "settings" && settings && (
           <section className="panel" key="settings">
-            <h2 className="section-head">Instellingen</h2>
-            <p className="section-sub">Geheugen, Java en data-map.</p>
+            <h2 className="section-head">Settings</h2>
+            <p className="section-sub">Memory, Java, and data folder.</p>
 
             <div className="settings-grid">
               <label>
-                Geheugen (MB)
+                Memory (MB)
                 <input
                   type="number"
                   min={1024}
@@ -1017,11 +1208,11 @@ export default function App() {
                 />
               </label>
               <label>
-                Java-pad
+                Java path
                 <input
                   type="text"
                   value={settings.java_path ?? ""}
-                  placeholder="Automatisch zoeken"
+                  placeholder="Auto-detect"
                   onChange={(e) =>
                     setSettings({ ...settings, java_path: e.target.value || null })
                   }
@@ -1030,7 +1221,7 @@ export default function App() {
               </label>
 
               <label>
-                Breedte
+                Width
                 <input
                   type="number"
                   min={640}
@@ -1040,7 +1231,7 @@ export default function App() {
                 />
               </label>
               <label>
-                Hoogte
+                Height
                 <input
                   type="number"
                   min={480}
@@ -1066,10 +1257,10 @@ export default function App() {
                     }
                   }}
                 />
-                Volledig scherm
+                Full screen
               </label>
               <label className="full">
-                JVM-argumenten
+                JVM arguments
                 <input
                   type="text"
                   value={jvmArgs}
@@ -1079,9 +1270,51 @@ export default function App() {
                 />
               </label>
 
+              <label className="check-row full">
+                <input
+                  type="checkbox"
+                  checked={settings.ingame_branding !== false}
+                  onChange={(e) => saveIngameBranding(e.target.checked)}
+                />
+                In-game Cubera branding (resource pack with logo &amp; splashes)
+              </label>
+
+              <div className="full log-block">
+                <div className="log-head">
+                  <h3>Launch log</h3>
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    disabled={!selected || logLoading}
+                    onClick={loadLaunchLog}
+                  >
+                    {logLoading ? "Loading…" : "Refresh"}
+                  </button>
+                </div>
+                {!selected && <p className="hint">Select an instance on Play to view logs.</p>}
+                {selected && launchLog && (
+                  <pre className="log-view">
+                    {launchLog.stderr && (
+                      <>
+                        <span className="log-label">stderr</span>
+                        {launchLog.stderr}
+                        {"\n\n"}
+                      </>
+                    )}
+                    {launchLog.stdout || "(No stdout — launch the game to generate logs)"}
+                  </pre>
+                )}
+              </div>
+
+              <div className="full row-actions">
+                <button type="button" className="cta secondary" onClick={openDataFolder}>
+                  Open data folder
+                </button>
+              </div>
+
               <div className="full">
                 <p className="hint">
-                  Java: {javaPath ?? "niet gevonden — brew install --cask temurin"}
+                  Java: {javaPath ?? "not found — brew install --cask temurin"}
                 </p>
                 <DataDir />
               </div>
@@ -1105,7 +1338,7 @@ export default function App() {
                 className="cta secondary"
                 onClick={() => setConfirmAction(null)}
               >
-                Annuleren
+                Cancel
               </button>
               <button
                 type="button"
@@ -1120,7 +1353,7 @@ export default function App() {
                   }
                 }}
               >
-                Verwijderen
+                Delete
               </button>
             </div>
           </div>
