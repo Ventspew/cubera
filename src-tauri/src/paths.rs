@@ -26,6 +26,12 @@ pub struct Settings {
     pub fullscreen: bool,
     #[serde(default)]
     pub jvm_args: String,
+    #[serde(default = "default_ingame_branding")]
+    pub ingame_branding: bool,
+}
+
+fn default_ingame_branding() -> bool {
+    true
 }
 
 fn default_width() -> u32 {

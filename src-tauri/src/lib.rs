@@ -1,4 +1,5 @@
 mod auth;
+mod branding;
 mod download;
 mod forge;
 mod launch;
@@ -203,6 +204,21 @@ async fn get_player_skin(uuid: String) -> Result<String, String> {
     skin::get_player_avatar_data_url(&uuid).await
 }
 
+#[tauri::command]
+fn get_app_info() -> branding::AppInfo {
+    branding::app_info()
+}
+
+#[tauri::command]
+fn get_launch_log(instance_id: String) -> Result<branding::LaunchLog, String> {
+    branding::read_launch_log(&instance_id)
+}
+
+#[tauri::command]
+fn open_data_folder() -> Result<(), String> {
+    branding::open_data_folder()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = ensure_dirs();
@@ -234,6 +250,9 @@ pub fn run() {
             install_mod,
             list_mods,
             get_player_skin,
+            get_app_info,
+            get_launch_log,
+            open_data_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cubera");

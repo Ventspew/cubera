@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
-type Tab = "play" | "install" | "mods" | "account" | "settings";
+type Tab = "home" | "play" | "install" | "mods" | "account" | "settings";
 
 type VersionInfo = {
   id: string;
@@ -35,6 +35,18 @@ type Settings = {
   height?: number;
   fullscreen?: boolean;
   jvm_args?: string;
+  ingame_branding?: boolean;
+};
+
+type AppInfo = {
+  name: string;
+  version: string;
+  tagline: string;
+};
+
+type LaunchLog = {
+  stdout: string;
+  stderr: string;
 };
 
 type ProgressEvent = {
@@ -63,12 +75,70 @@ type ModVersion = {
 };
 
 const TABS: { id: Tab; label: string; short: string }[] = [
+  { id: "home", label: "Home", short: "Home" },
   { id: "play", label: "Spelen", short: "Spel" },
   { id: "install", label: "Installeren", short: "Inst" },
   { id: "mods", label: "Mods", short: "Mods" },
   { id: "account", label: "Account", short: "Acc" },
   { id: "settings", label: "Instellingen", short: "Set" },
 ];
+
+function CuberaLogo({ size = 32, className = "" }: { size?: number; className?: string }) {
+  return (
+    <svg
+      className={`cubera-logo ${className}`.trim()}
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="none"
+      aria-hidden
+    >
+      <defs>
+        <linearGradient id="logo-ore" x1="6" y1="4" x2="58" y2="60" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#F5D4A8" />
+          <stop offset="0.35" stopColor="#E8A86A" />
+          <stop offset="0.65" stopColor="#D4894A" />
+          <stop offset="1" stopColor="#6B3818" />
+        </linearGradient>
+        <linearGradient id="logo-facet" x1="18" y1="10" x2="50" y2="54" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#2E2620" />
+          <stop offset="0.55" stopColor="#1A1612" />
+          <stop offset="1" stopColor="#0A0908" />
+        </linearGradient>
+        <radialGradient id="logo-glow" cx="32" cy="32" r="28" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#D4894A" stopOpacity="0.28" />
+          <stop offset="1" stopColor="#D4894A" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="32" cy="32" r="30" fill="url(#logo-glow)" className="logo-glow-ring" />
+      <path
+        d="M8 18 L32 4 L56 18 L56 42 L32 60 L8 42 Z"
+        fill="url(#logo-facet)"
+        stroke="rgba(232,168,106,0.45)"
+        strokeWidth="1.35"
+      />
+      <path d="M32 4 L56 18 L32 30 L8 18 Z" fill="rgba(245,212,168,0.12)" />
+      <path d="M8 18 L32 30 L32 60 L8 42 Z" fill="rgba(0,0,0,0.32)" />
+      <path d="M56 18 L32 30 L32 60 L56 42 Z" fill="rgba(212,137,74,0.14)" />
+      <path
+        d="M40.5 22.5c-1.4-2.8-4.6-4.7-8.3-4.7-5.4 0-9.5 3.9-9.5 9.7v9c0 5.8 4.1 9.7 9.5 9.7 3.7 0 6.9-1.9 8.3-4.7"
+        stroke="url(#logo-ore)"
+        strokeWidth="3.6"
+        strokeLinecap="round"
+        className="logo-monogram"
+      />
+      <path
+        d="M21 27 L29.5 32.5 L27.5 39.5 L35.5 43.5 L39 48"
+        stroke="#F0C08A"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="logo-vein"
+      />
+      <circle cx="39" cy="48" r="2" fill="#F0C08A" className="logo-vein-dot" />
+    </svg>
+  );
+}
 
 function NavGlyph({ id }: { id: Tab }) {
   const common = {
@@ -80,6 +150,13 @@ function NavGlyph({ id }: { id: Tab }) {
     "aria-hidden": true as const,
   };
   switch (id) {
+    case "home":
+      return (
+        <svg {...common}>
+          <path d="M2 6.5 7 2.5 12 6.5V12H2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+          <path d="M5 12V9h4v3" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+        </svg>
+      );
     case "play":
       return (
         <svg {...common}>
@@ -205,7 +282,7 @@ async function invokeOk(cmd: string, args?: Record<string, unknown>): Promise<bo
 }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("play");
+  const [tab, setTab] = useState<Tab>("home");
   const [manifest, setManifest] = useState<VersionManifest | null>(null);
   const [installed, setInstalled] = useState<string[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -241,6 +318,9 @@ export default function App() {
   const [resH, setResH] = useState(720);
   const [fullscreen, setFullscreen] = useState(false);
   const [jvmArgs, setJvmArgs] = useState("");
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
+  const [launchLog, setLaunchLog] = useState<LaunchLog | null>(null);
+  const [logLoading, setLogLoading] = useState(false);
 
   const activeAccount = useMemo(() => {
     if (!settings) return null;
@@ -281,6 +361,7 @@ export default function App() {
 
   useEffect(() => {
     refresh().catch((e) => showStatus(String(e), true));
+    invoke<AppInfo>("get_app_info").then(setAppInfo).catch(() => {});
     const unlisten = listen<ProgressEvent>("install-progress", (e) => {
       setProgress(e.payload);
       showStatus(e.payload.message);
@@ -605,6 +686,30 @@ export default function App() {
     showStatus("Instellingen opgeslagen");
   }
 
+  async function loadLaunchLog() {
+    if (!selected) return;
+    setLogLoading(true);
+    try {
+      const log = await invoke<LaunchLog>("get_launch_log", { instanceId: selected });
+      setLaunchLog(log);
+    } catch (e) {
+      showStatus(String(e), true);
+    } finally {
+      setLogLoading(false);
+    }
+  }
+
+  async function saveIngameBranding(enabled: boolean) {
+    if (!settings) return;
+    await persistSettings({ ...settings, ingame_branding: enabled });
+    showStatus(enabled ? "In-game branding ingeschakeld" : "In-game branding uitgeschakeld");
+  }
+
+  async function openDataFolder() {
+    const ok = await tryInvoke("open_data_folder");
+    if (ok === null) showStatus("Data-map openen mislukt", true);
+  }
+
   const progressPct = progress?.total
     ? Math.min(100, (100 * progress.current) / progress.total)
     : 8;
@@ -616,7 +721,7 @@ export default function App() {
     <div className="shell">
       <aside className="rail">
         <div className="brand">
-          <img src="/cubera.svg" alt="" width={32} height={32} />
+          <CuberaLogo size={32} className="brand-mark" />
           <span>Cubera</span>
           <span className="brand-text-mobile">CB</span>
         </div>
@@ -656,12 +761,98 @@ export default function App() {
       </aside>
 
       <main className="stage">
+        {tab === "home" && (
+          <section className="home-dashboard" key="home">
+            <header className="home-hero">
+              <div className="home-mark">
+                <CuberaLogo size={72} className="hero-mark" />
+                <div>
+                  <h1>Cubera</h1>
+                  <p className="home-version">
+                    v{appInfo?.version ?? "0.1.0"} — {appInfo?.tagline ?? "Minecraft launcher"}
+                  </p>
+                </div>
+              </div>
+              <p className="home-intro">
+                Welkom terug{activeAccount ? `, ${activeAccount.name}` : ""}. Je mineralen-workbench voor
+                vanilla, Fabric, Forge en Modrinth — met ingame Cubera-branding.
+              </p>
+            </header>
+
+            <div className="home-stats">
+              <div className="stat-card">
+                <span className="stat-label">Instances</span>
+                <strong>{installed.length}</strong>
+              </div>
+              <div className="stat-card">
+                <span className="stat-label">Mods (actief)</span>
+                <strong>{instanceMods.length}</strong>
+              </div>
+              <div className="stat-card">
+                <span className="stat-label">Java</span>
+                <strong className={javaPath ? "ok" : "warn"}>{javaPath ? "Gereed" : "Ontbreekt"}</strong>
+              </div>
+              <div className="stat-card">
+                <span className="stat-label">Branding</span>
+                <strong>{settings?.ingame_branding !== false ? "Aan" : "Uit"}</strong>
+              </div>
+            </div>
+
+            <div className="home-actions">
+              <button type="button" className="home-card" onClick={() => setTab("play")}>
+                <span className="card-eyebrow">Spelen</span>
+                <strong>{selected || "Kies instance"}</strong>
+                <span>{launchReady ? "Klaar om te starten" : "Account of instance nodig"}</span>
+              </button>
+              <button type="button" className="home-card" onClick={() => setTab("install")}>
+                <span className="card-eyebrow">Installeren</span>
+                <strong>{manifest?.latest.release ?? "—"}</strong>
+                <span>Vanilla, Fabric of Forge</span>
+              </button>
+              <button type="button" className="home-card" onClick={() => setTab("mods")}>
+                <span className="card-eyebrow">Mods</span>
+                <strong>Modrinth</strong>
+                <span>Zoeken &amp; installeren</span>
+              </button>
+              <button type="button" className="home-card" onClick={() => setTab("account")}>
+                <span className="card-eyebrow">Account</span>
+                <strong>{activeAccount?.name ?? "Inloggen"}</strong>
+                <span>{activeAccount?.offline ? "Offline profiel" : "Microsoft of offline"}</span>
+              </button>
+            </div>
+
+            <div className="home-panels">
+              <div className="home-panel">
+                <h3>Wat is nieuw</h3>
+                <ul className="plain changelog">
+                  <li>Verfijnd Cubera-logo met koperen gloed en facetten</li>
+                  <li>In-game branding via resource pack (subtitle &amp; splashes)</li>
+                  <li>Home-dashboard met snelle statistieken</li>
+                  <li>Launch-log viewer in Instellingen</li>
+                </ul>
+              </div>
+              <div className="home-panel accent">
+                <h3>Snel starten</h3>
+                <p className="hint">Instance: <strong>{selected || "geen"}</strong></p>
+                <button
+                  type="button"
+                  className="cta launch"
+                  disabled={!launchReady}
+                  onClick={onLaunch}
+                >
+                  {busy ? "Bezig…" : "Minecraft starten"}
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
         {tab === "play" && (
           <section className="play-hero" key="play">
             <div className="play-left">
               <div className="play-brand">
                 <div className="mark-row">
-                  <img src="/cubera.svg" alt="" width={52} height={52} />
+                  <CuberaLogo size={56} className="hero-mark" />
                   <h1>Cubera</h1>
                 </div>
                 <p className="tagline">
@@ -1078,6 +1269,48 @@ export default function App() {
                   onBlur={saveExtendedSettings}
                 />
               </label>
+
+              <label className="check-row full">
+                <input
+                  type="checkbox"
+                  checked={settings.ingame_branding !== false}
+                  onChange={(e) => saveIngameBranding(e.target.checked)}
+                />
+                In-game Cubera-branding (resource pack met logo &amp; splashes)
+              </label>
+
+              <div className="full log-block">
+                <div className="log-head">
+                  <h3>Launch-log</h3>
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    disabled={!selected || logLoading}
+                    onClick={loadLaunchLog}
+                  >
+                    {logLoading ? "Laden…" : "Vernieuwen"}
+                  </button>
+                </div>
+                {!selected && <p className="hint">Selecteer een instance op Spelen om logs te bekijken.</p>}
+                {selected && launchLog && (
+                  <pre className="log-view">
+                    {launchLog.stderr && (
+                      <>
+                        <span className="log-label">stderr</span>
+                        {launchLog.stderr}
+                        {"\n\n"}
+                      </>
+                    )}
+                    {launchLog.stdout || "(Geen stdout — start het spel om logs te genereren)"}
+                  </pre>
+                )}
+              </div>
+
+              <div className="full row-actions">
+                <button type="button" className="cta secondary" onClick={openDataFolder}>
+                  Data-map openen
+                </button>
+              </div>
 
               <div className="full">
                 <p className="hint">
