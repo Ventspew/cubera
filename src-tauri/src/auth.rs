@@ -78,15 +78,15 @@ pub async fn start_device_login() -> Result<DeviceCodeResponse, String> {
         .form(&[("client_id", MSA_CLIENT_ID), ("scope", MSA_SCOPE)])
         .send()
         .await
-        .map_err(|e| format!("Kan Microsoft niet bereiken: {e}"))?;
+        .map_err(|e| format!("Could not reach Microsoft: {e}"))?;
 
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
-        return Err(format!("Microsoft device-login mislukt ({status}): {text}"));
+        return Err(format!("Microsoft device login failed ({status}): {text}"));
     }
 
-    serde_json::from_str(&text).map_err(|e| format!("Ongeldig device-code antwoord: {e} — {text}"))
+    serde_json::from_str(&text).map_err(|e| format!("Invalid device code response: {e} — {text}"))
 }
 
 pub async fn poll_device_login(device_code: String, interval: u64) -> Result<Account, String> {
@@ -96,7 +96,7 @@ pub async fn poll_device_login(device_code: String, interval: u64) -> Result<Acc
 
     loop {
         if std::time::Instant::now() > deadline {
-            return Err("Login verlopen. Probeer opnieuw.".into());
+            return Err("Login expired. Please try again.".into());
         }
 
         tokio::time::sleep(Duration::from_secs(interval)).await;
@@ -110,11 +110,11 @@ pub async fn poll_device_login(device_code: String, interval: u64) -> Result<Acc
             ])
             .send()
             .await
-            .map_err(|e| format!("Token-request mislukt: {e}"))?;
+            .map_err(|e| format!("Token request failed: {e}"))?;
 
         let text = resp.text().await.map_err(|e| e.to_string())?;
         let token: TokenResponse = serde_json::from_str(&text)
-            .map_err(|e| format!("Ongeldig token-antwoord: {e} — {text}"))?;
+            .map_err(|e| format!("Invalid token response: {e} — {text}"))?;
 
         if let Some(err) = token.error.as_deref() {
             match err {
@@ -123,18 +123,18 @@ pub async fn poll_device_login(device_code: String, interval: u64) -> Result<Acc
                     tokio::time::sleep(Duration::from_secs(interval)).await;
                     continue;
                 }
-                "expired_token" => return Err("Login verlopen. Probeer opnieuw.".into()),
-                "access_denied" => return Err("Login geannuleerd.".into()),
+                "expired_token" => return Err("Login expired. Please try again.".into()),
+                "access_denied" => return Err("Login cancelled.".into()),
                 other => {
                     let detail = token.error_description.unwrap_or_default();
-                    return Err(format!("Microsoft-fout ({other}): {detail}"));
+                    return Err(format!("Microsoft error ({other}): {detail}"));
                 }
             }
         }
 
         let access = token
             .access_token
-            .ok_or_else(|| format!("Geen access token ontvangen: {text}"))?;
+            .ok_or_else(|| format!("No access token received: {text}"))?;
         return finish_xbox_minecraft_login(access, token.refresh_token).await;
     }
 }
@@ -158,22 +158,22 @@ async fn finish_xbox_minecraft_login(
         }))
         .send()
         .await
-        .map_err(|e| format!("Xbox Live auth mislukt: {e}"))?;
+        .map_err(|e| format!("Xbox Live auth failed: {e}"))?;
 
     let xbl_status = xbl_resp.status();
     let xbl_text = xbl_resp.text().await.map_err(|e| e.to_string())?;
     if !xbl_status.is_success() {
-        return Err(format!("Xbox Live weigerde login ({xbl_status}): {xbl_text}"));
+        return Err(format!("Xbox Live rejected login ({xbl_status}): {xbl_text}"));
     }
     let xbl: XblResponse = serde_json::from_str(&xbl_text)
-        .map_err(|e| format!("Xbox Live antwoord ongeldig: {e}"))?;
+        .map_err(|e| format!("Invalid Xbox Live response: {e}"))?;
 
     let user_hash = xbl
         .display_claims
         .xui
         .first()
         .map(|u| u.uhs.clone())
-        .ok_or_else(|| "Geen Xbox user hash ontvangen".to_string())?;
+        .ok_or_else(|| "No Xbox user hash received".to_string())?;
 
     let xsts_resp = client
         .post("https://xsts.auth.xboxlive.com/xsts/authorize")
@@ -187,15 +187,15 @@ async fn finish_xbox_minecraft_login(
         }))
         .send()
         .await
-        .map_err(|e| format!("XSTS mislukt: {e}"))?;
+        .map_err(|e| format!("XSTS failed: {e}"))?;
 
     let xsts_status = xsts_resp.status();
     let xsts_text = xsts_resp.text().await.map_err(|e| e.to_string())?;
     if !xsts_status.is_success() {
         let hint = if let Ok(body) = serde_json::from_str::<XstsErrorBody>(&xsts_text) {
             match body.xerr {
-                Some(2148916233) => " Dit Microsoft-account heeft geen Xbox-profiel. Maak er een aan op xbox.com.".to_string(),
-                Some(2148916238) => " Dit is een kinderaccount — voeg het toe aan een Microsoft Family.".to_string(),
+                Some(2148916233) => " This Microsoft account has no Xbox profile. Create one at xbox.com.".to_string(),
+                Some(2148916238) => " This is a child account — add it to a Microsoft Family.".to_string(),
                 Some(_) => body.message.unwrap_or_default(),
                 None => body.message.unwrap_or_default(),
             }
@@ -203,11 +203,11 @@ async fn finish_xbox_minecraft_login(
             String::new()
         };
         return Err(format!(
-            "XSTS mislukt ({xsts_status}). Heb je Minecraft Java?{hint} {xsts_text}"
+            "XSTS failed ({xsts_status}). Do you own Minecraft Java?{hint} {xsts_text}"
         ));
     }
     let xsts: XblResponse = serde_json::from_str(&xsts_text)
-        .map_err(|e| format!("XSTS antwoord ongeldig: {e}"))?;
+        .map_err(|e| format!("Invalid XSTS response: {e}"))?;
 
     let mc_resp = client
         .post("https://api.minecraftservices.com/authentication/login_with_xbox")
@@ -216,34 +216,34 @@ async fn finish_xbox_minecraft_login(
         }))
         .send()
         .await
-        .map_err(|e| format!("Minecraft login mislukt: {e}"))?;
+        .map_err(|e| format!("Minecraft login failed: {e}"))?;
 
     let mc_status = mc_resp.status();
     let mc_text = mc_resp.text().await.map_err(|e| e.to_string())?;
     if !mc_status.is_success() {
         return Err(format!(
-            "Minecraft-services weigerden login ({mc_status}). Check of Minecraft Java gekocht is. {mc_text}"
+            "Minecraft services rejected login ({mc_status}). Check that you own Minecraft Java. {mc_text}"
         ));
     }
     let mc: McLoginResponse = serde_json::from_str(&mc_text)
-        .map_err(|e| format!("Minecraft login-antwoord ongeldig: {e}"))?;
+        .map_err(|e| format!("Invalid Minecraft login response: {e}"))?;
 
     let profile_resp = client
         .get("https://api.minecraftservices.com/minecraft/profile")
         .bearer_auth(&mc.access_token)
         .send()
         .await
-        .map_err(|e| format!("Profiel ophalen mislukt: {e}"))?;
+        .map_err(|e| format!("Failed to fetch profile: {e}"))?;
 
     let profile_status = profile_resp.status();
     let profile_text = profile_resp.text().await.map_err(|e| e.to_string())?;
     if !profile_status.is_success() {
         return Err(format!(
-            "Geen Minecraft-profiel ({profile_status}). Heb je Java Edition? {profile_text}"
+            "No Minecraft profile ({profile_status}). Do you own Java Edition? {profile_text}"
         ));
     }
     let profile: McProfile = serde_json::from_str(&profile_text)
-        .map_err(|e| format!("Profiel ongeldig: {e}"))?;
+        .map_err(|e| format!("Invalid profile: {e}"))?;
 
     let account = Account {
         uuid: insert_uuid_dashes(&profile.id),
@@ -265,7 +265,7 @@ async fn finish_xbox_minecraft_login(
 pub fn add_offline_account(name: String) -> Result<Account, String> {
     let name = name.trim().to_string();
     if name.is_empty() || name.len() > 16 {
-        return Err("Gebruikersnaam moet 1–16 tekens zijn".into());
+        return Err("Username must be 1–16 characters".into());
     }
     let uuid = offline_uuid(&name);
     let account = Account {

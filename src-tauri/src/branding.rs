@@ -171,7 +171,7 @@ pub fn app_info() -> AppInfo {
     AppInfo {
         name: "Cubera".into(),
         version: env!("CARGO_PKG_VERSION").into(),
-        tagline: "Precisie-instrument voor macOS".into(),
+        tagline: "Precision instrument for macOS".into(),
     }
 }
 
