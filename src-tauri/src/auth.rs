@@ -287,19 +287,74 @@ fn offline_uuid(name: &str) -> String {
     let data = format!("OfflinePlayer:{name}");
     let digest = md5_bytes(data.as_bytes());
     let mut bytes = digest;
+    // UUID version 3
     bytes[6] = (bytes[6] & 0x0f) | 0x30;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     Uuid::from_bytes(bytes).to_string()
 }
 
 fn md5_bytes(data: &[u8]) -> [u8; 16] {
-    use sha1::Digest;
-    let mut hasher = sha1::Sha1::new();
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
     hasher.update(data);
     let result = hasher.finalize();
     let mut out = [0u8; 16];
-    out.copy_from_slice(&result[..16]);
+    out.copy_from_slice(&result);
     out
+}
+
+/// Refresh MSA token if needed and return an account with a valid Minecraft access token.
+pub async fn ensure_fresh_account(account: &Account) -> Result<Account, String> {
+    if account.offline {
+        return Ok(account.clone());
+    }
+
+    if profile_ok(&account.access_token).await {
+        return Ok(account.clone());
+    }
+
+    let Some(refresh) = account.refresh_token.as_deref() else {
+        return Err("Microsoft session expired. Please sign in again.".into());
+    };
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", MSA_CLIENT_ID),
+            ("refresh_token", refresh),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Token refresh failed: {e}"))?;
+
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let token: TokenResponse =
+        serde_json::from_str(&text).map_err(|e| format!("Invalid refresh response: {e} — {text}"))?;
+
+    if let Some(err) = token.error.as_deref() {
+        return Err(format!(
+            "Microsoft session expired ({err}). Please sign in again."
+        ));
+    }
+
+    let access = token
+        .access_token
+        .ok_or_else(|| "No access token from refresh".to_string())?;
+    let new_refresh = token.refresh_token.or_else(|| account.refresh_token.clone());
+    finish_xbox_minecraft_login(access, new_refresh).await
+}
+
+async fn profile_ok(mc_token: &str) -> bool {
+    let client = reqwest::Client::new();
+    client
+        .get("https://api.minecraftservices.com/minecraft/profile")
+        .bearer_auth(mc_token)
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
 fn insert_uuid_dashes(id: &str) -> String {

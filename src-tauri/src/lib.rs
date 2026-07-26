@@ -2,10 +2,12 @@ mod auth;
 mod branding;
 mod download;
 mod forge;
+mod instances;
 mod launch;
 mod loaders;
 mod manifest;
 mod modrinth;
+mod news;
 mod paths;
 mod skin;
 
@@ -68,7 +70,58 @@ async fn install_forge(
 
 #[tauri::command]
 async fn launch_instance(version_id: String) -> Result<String, String> {
+    // version_id arg is the instance id (folder name)
     launch::launch_game(&version_id).await
+}
+
+#[tauri::command]
+fn list_instances() -> Result<Vec<instances::InstanceInfo>, String> {
+    instances::list_instances()
+}
+
+#[tauri::command]
+fn update_instance(meta: instances::InstanceMeta) -> Result<instances::InstanceMeta, String> {
+    instances::update_instance(meta)
+}
+
+#[tauri::command]
+fn duplicate_instance(instance_id: String, new_name: String) -> Result<String, String> {
+    instances::duplicate_instance(&instance_id, &new_name)
+}
+
+#[tauri::command]
+fn kill_instance(instance_id: String) -> Result<(), String> {
+    instances::kill_instance(&instance_id)
+}
+
+#[tauri::command]
+fn is_instance_running(instance_id: String) -> bool {
+    instances::is_running(&instance_id)
+}
+
+#[tauri::command]
+fn open_instance_subfolder(instance_id: String, folder: String) -> Result<(), String> {
+    instances::open_instance_subfolder(&instance_id, &folder)
+}
+
+#[tauri::command]
+async fn fetch_news() -> Result<Vec<news::NewsItem>, String> {
+    news::fetch_minecraft_news().await
+}
+
+#[tauri::command]
+async fn list_quilt_loaders(game_version: String) -> Result<Vec<loaders::FabricLoaderVersion>, String> {
+    loaders::list_quilt_loaders(&game_version).await
+}
+
+#[tauri::command]
+async fn install_quilt(
+    app: tauri::AppHandle,
+    game_version: String,
+    game_version_url: String,
+    loader_version: String,
+) -> Result<String, String> {
+    loaders::install_quilt(app, &game_version, &game_version_url, &loader_version).await
 }
 
 #[tauri::command]
@@ -160,13 +213,27 @@ fn delete_mod(instance_id: String, filename: String) -> Result<(), String> {
 
 #[tauri::command]
 fn delete_instance(instance_id: String) -> Result<(), String> {
+    let meta = instances::load_meta(&instance_id).ok();
+    let version_id = meta
+        .as_ref()
+        .map(|m| m.version_id.clone())
+        .unwrap_or_else(|| instance_id.clone());
+
     let instance = paths::instances_dir().join(&instance_id);
     if instance.exists() {
         fs::remove_dir_all(&instance).map_err(|e| e.to_string())?;
     }
-    let version = paths::versions_dir().join(&instance_id);
-    if version.exists() {
-        fs::remove_dir_all(&version).map_err(|e| e.to_string())?;
+
+    // Only remove the version profile if no other instance still uses it
+    let still_used = instances::list_instances()
+        .unwrap_or_default()
+        .iter()
+        .any(|i| i.version_id == version_id);
+    if !still_used {
+        let version = paths::versions_dir().join(&version_id);
+        if version.exists() {
+            fs::remove_dir_all(&version).map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -181,6 +248,22 @@ async fn search_mods(
 }
 
 #[tauri::command]
+async fn search_resourcepacks(
+    query: String,
+    game_version: Option<String>,
+) -> Result<modrinth::ModrinthSearch, String> {
+    modrinth::search_resourcepacks(&query, game_version).await
+}
+
+#[tauri::command]
+async fn search_shaders(
+    query: String,
+    game_version: Option<String>,
+) -> Result<modrinth::ModrinthSearch, String> {
+    modrinth::search_shaders(&query, game_version).await
+}
+
+#[tauri::command]
 async fn get_mod_versions(
     project_id: String,
     game_version: Option<String>,
@@ -192,6 +275,16 @@ async fn get_mod_versions(
 #[tauri::command]
 async fn install_mod(instance_id: String, file_url: String, filename: String) -> Result<String, String> {
     modrinth::install_mod(&instance_id, &file_url, &filename).await
+}
+
+#[tauri::command]
+async fn install_content(
+    instance_id: String,
+    folder: String,
+    file_url: String,
+    filename: String,
+) -> Result<String, String> {
+    modrinth::install_content(&instance_id, &folder, &file_url, &filename).await
 }
 
 #[tauri::command]
@@ -246,13 +339,25 @@ pub fn run() {
             delete_mod,
             delete_instance,
             search_mods,
+            search_resourcepacks,
+            search_shaders,
             get_mod_versions,
             install_mod,
+            install_content,
             list_mods,
             get_player_skin,
             get_app_info,
             get_launch_log,
             open_data_folder,
+            list_instances,
+            update_instance,
+            duplicate_instance,
+            kill_instance,
+            is_instance_running,
+            open_instance_subfolder,
+            fetch_news,
+            list_quilt_loaders,
+            install_quilt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cubera");

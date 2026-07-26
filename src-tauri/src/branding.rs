@@ -1,4 +1,3 @@
-use png::Encoder;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -194,7 +193,7 @@ pub fn remove_branding_from_options(game_dir: &Path) -> Result<(), String> {
     if !raw.contains(PACK_FILE) {
         return Ok(());
     }
-    let updated = raw.replace(&format!("\"file/{PACK_FILE}\",", ""), "");
+    let updated = raw.replace(&format!("\"file/{PACK_FILE}\","), "");
     let updated = updated.replace(&format!(",\"file/{PACK_FILE}\""), "");
     let updated = updated.replace(&format!("\"file/{PACK_FILE}\""), "");
     fs::write(&options_path, updated).map_err(|e| e.to_string())?;

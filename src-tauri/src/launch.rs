@@ -78,18 +78,33 @@ fn which(bin: &str) -> Result<PathBuf, String> {
     ))
 }
 
-pub async fn launch_game(version_id: &str) -> Result<String, String> {
+pub async fn launch_game(instance_id: &str) -> Result<String, String> {
     let settings = load_settings();
     let account = active_account(&settings.accounts, settings.active_account.as_deref())
         .ok_or_else(|| "No account selected. Log in first.".to_string())?;
+    let account = crate::auth::ensure_fresh_account(account).await?;
 
-    let java = find_java(settings.java_path.as_deref())?;
-    let chain = resolve_version_chain(version_id)?;
+    let meta = crate::instances::ensure_instance(instance_id)?;
+    let version_id = if meta.version_id.is_empty() {
+        instance_id.to_string()
+    } else {
+        meta.version_id.clone()
+    };
+
+    let memory = meta.memory_mb.unwrap_or(settings.memory_mb).max(512);
+    let java_pref = meta
+        .java_path
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or(settings.java_path.as_deref());
+    let java = find_java(java_pref)?;
+    let chain = resolve_version_chain(&version_id)?;
     let merged = merge_versions(&chain)?;
 
-    let game_dir = crate::paths::instances_dir().join(version_id);
+    let game_dir = crate::paths::instances_dir().join(instance_id);
     fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
     fs::create_dir_all(game_dir.join("mods")).map_err(|e| e.to_string())?;
+    let _ = crate::instances::ensure_instance_with_version(instance_id, &version_id);
 
     if settings.ingame_branding {
         crate::branding::install_ingame_branding(&game_dir)?;
@@ -97,11 +112,11 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
         let _ = crate::branding::remove_branding_from_options(&game_dir);
     }
 
-    let natives = natives_dir_for(version_id);
+    let natives = natives_dir_for(&version_id);
     fs::create_dir_all(&natives).map_err(|e| e.to_string())?;
     extract_natives(&merged.libraries, &natives)?;
 
-    let classpath = build_classpath(version_id, &merged.libraries)?;
+    let classpath = build_classpath(&version_id, &merged.libraries)?;
     let asset_index = merged
         .asset_index
         .as_ref()
@@ -110,30 +125,37 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
         .unwrap_or_else(|| "legacy".into());
 
     let mut jvm_args = vec![
-        format!("-Xmx{}M", settings.memory_mb),
-        format!("-Xms{}M", (settings.memory_mb / 4).max(512)),
+        format!("-Xmx{}M", memory),
+        format!("-Xms{}M", (memory / 4).max(512)),
         format!("-Djava.library.path={}", natives.display()),
         "-Dminecraft.launcher.brand=Cubera".into(),
         "-Dminecraft.launcher.version=0.1.0".into(),
     ];
 
-    if !settings.jvm_args.trim().is_empty() {
-        jvm_args.extend(
-            settings
-                .jvm_args
-                .split_whitespace()
-                .map(|s| s.to_string()),
-        );
+    let extra_jvm = meta
+        .jvm_args
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(settings.jvm_args.as_str());
+    if !extra_jvm.trim().is_empty() {
+        jvm_args.extend(extra_jvm.split_whitespace().map(|s| s.to_string()));
     }
 
     if let Some(args) = merged.arguments.as_ref().and_then(|a| a.jvm.as_ref()) {
-        jvm_args.extend(expand_args(args, &classpath, &natives, &account, version_id, &game_dir, &asset_index));
+        jvm_args.extend(expand_args(
+            args,
+            &classpath,
+            &natives,
+            &account,
+            &version_id,
+            &game_dir,
+            &asset_index,
+        ));
     } else {
         jvm_args.push("-cp".into());
         jvm_args.push(classpath.clone());
     }
 
-    // Ensure -cp is present for modern args that use ${classpath}
     if !jvm_args.iter().any(|a| a == "-cp" || a == "-classpath") {
         jvm_args.push("-cp".into());
         jvm_args.push(classpath.clone());
@@ -148,7 +170,7 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
             &classpath,
             &natives,
             &account,
-            version_id,
+            &version_id,
             &game_dir,
             &asset_index,
         ));
@@ -159,7 +181,7 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
                 &classpath,
                 &natives,
                 &account,
-                version_id,
+                &version_id,
                 &game_dir,
                 &asset_index,
             )
@@ -169,7 +191,7 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
             "--username".into(),
             account.name.clone(),
             "--version".into(),
-            version_id.into(),
+            version_id.clone(),
             "--gameDir".into(),
             game_dir.display().to_string(),
             "--assetsDir".into(),
@@ -191,7 +213,6 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
         ]);
     }
 
-    // Window / fullscreen
     if settings.fullscreen {
         if !game_args.iter().any(|a| a == "--fullscreen") {
             game_args.push("--fullscreen".into());
@@ -206,7 +227,6 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
         }
     }
 
-    // Log file
     let log_path = game_dir.join("cubera-launch.log");
     let log_file = fs::File::create(&log_path).ok();
     let err_file = fs::File::create(game_dir.join("cubera-launch.err.log")).ok();
@@ -228,8 +248,13 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
         cmd.stderr(Stdio::null());
     }
 
-    cmd.spawn().map_err(|e| format!("Failed to launch: {e}"))?;
-    Ok(format!("Launched {version_id} as {}", account.name))
+    let child = cmd.spawn().map_err(|e| format!("Failed to launch: {e}"))?;
+    crate::instances::register_running(instance_id, child.id());
+    let _ = crate::instances::mark_played(instance_id);
+    Ok(format!(
+        "Launched {} ({version_id}) as {}",
+        meta.name, account.name
+    ))
 }
 
 fn active_account<'a>(accounts: &'a [Account], active: Option<&str>) -> Option<&'a Account> {

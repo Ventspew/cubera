@@ -94,9 +94,111 @@ pub async fn install_fabric(
         }
     }
 
-    let instance = crate::paths::instances_dir().join(&profile_id);
-    fs::create_dir_all(instance.join("mods")).map_err(|e| e.to_string())?;
+    let _ = crate::instances::ensure_instance_with_version(&profile_id, &profile_id);
 
+    Ok(profile_id)
+}
+
+// --- Quilt (Fabric-compatible meta API) ---
+
+const QUILT_META: &str = "https://meta.quiltmc.org/v3";
+
+pub async fn list_quilt_loaders(game_version: &str) -> Result<Vec<FabricLoaderVersion>, String> {
+    let url = format!("{QUILT_META}/versions/loader/{game_version}");
+    let client = reqwest::Client::new();
+    let loaders: Vec<serde_json::Value> = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for item in loaders {
+        if let Some(loader) = item.get("loader") {
+            let version = loader
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if version.is_empty() {
+                continue;
+            }
+            out.push(FabricLoaderVersion {
+                separator: ".".into(),
+                build: 0,
+                maven: loader
+                    .get("maven")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                version,
+                stable: loader
+                    .get("stable")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            });
+        }
+    }
+    Ok(out)
+}
+
+pub async fn install_quilt(
+    app: AppHandle,
+    game_version: &str,
+    game_version_url: &str,
+    loader_version: &str,
+) -> Result<String, String> {
+    ensure_dirs()?;
+    if !versions_dir()
+        .join(game_version)
+        .join(format!("{game_version}.json"))
+        .exists()
+    {
+        install_vanilla(app.clone(), game_version, game_version_url).await?;
+    }
+
+    let profile_id = format!("quilt-loader-{loader_version}-{game_version}");
+    let url = format!("{QUILT_META}/versions/loader/{game_version}/{loader_version}/profile/json");
+    let client = reqwest::Client::new();
+    let profile: serde_json::Value = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let dir = versions_dir().join(&profile_id);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    fs::write(
+        dir.join(format!("{profile_id}.json")),
+        serde_json::to_string_pretty(&profile).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+
+    if let Some(libs) = profile.get("libraries").and_then(|v| v.as_array()) {
+        for lib in libs {
+            let name = lib.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let base = lib
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://maven.quiltmc.org/repository/release/");
+            let rel = maven_path(name);
+            let dest = libraries_dir().join(&rel);
+            let url = format!("{base}{rel}");
+            download_file(&url, &dest, None).await?;
+        }
+    }
+
+    let _ = crate::instances::ensure_instance_with_version(&profile_id, &profile_id);
     Ok(profile_id)
 }
 
@@ -265,8 +367,7 @@ pub async fn install_forge(
         }
     }
 
-    let instance = crate::paths::instances_dir().join(&profile_id);
-    fs::create_dir_all(instance.join("mods")).map_err(|e| e.to_string())?;
+    let _ = crate::instances::ensure_instance_with_version(&profile_id, &profile_id);
 
     Ok(profile_id)
 }
