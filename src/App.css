@@ -1815,3 +1815,40 @@ input:focus {
     grid-template-columns: 1fr;
   }
 }
+
+.managed-java h3 {
+  margin: 0 0 0.35rem;
+  font-family: var(--display);
+  font-size: 0.95rem;
+  color: var(--accent-bright);
+}
+
+.managed-java-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.55rem;
+}
+
+.managed-java-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.22);
+  clip-path: var(--cut-sm);
+}
+
+.managed-java-row strong {
+  display: block;
+  font-size: 0.88rem;
+}
+
+.managed-java-row .hint {
+  display: block;
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+  word-break: break-all;
+}

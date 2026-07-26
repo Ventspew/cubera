@@ -60,6 +60,13 @@ pub async fn search_shaders(
     search_projects(query, "shader", None, game_version).await
 }
 
+pub async fn search_modpacks(
+    query: &str,
+    game_version: Option<String>,
+) -> Result<ModrinthSearch, String> {
+    search_projects(query, "modpack", None, game_version).await
+}
+
 async fn search_projects(
     query: &str,
     project_type: &str,

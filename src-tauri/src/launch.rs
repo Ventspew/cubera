@@ -6,6 +6,35 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+fn resolve_java(
+    preferred: Option<&str>,
+    required: Option<&crate::manifest::JavaVersion>,
+) -> Result<PathBuf, String> {
+    if let Some(p) = preferred {
+        let path = PathBuf::from(p);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+    if let Some(req) = required {
+        if let Some(bin) = crate::java_runtime::managed_java_bin(&req.component) {
+            return Ok(bin);
+        }
+        // Fall back to major-version component mapping
+        let comp = crate::java_runtime::component_for_major(req.major_version);
+        if let Some(bin) = crate::java_runtime::managed_java_bin(comp) {
+            return Ok(bin);
+        }
+    }
+    // Prefer any managed delta/gamma if present
+    for comp in ["java-runtime-delta", "java-runtime-gamma", "java-runtime-epsilon"] {
+        if let Some(bin) = crate::java_runtime::managed_java_bin(comp) {
+            return Ok(bin);
+        }
+    }
+    find_java(None)
+}
+
 pub fn find_java(preferred: Option<&str>) -> Result<PathBuf, String> {
     if let Some(p) = preferred {
         let path = PathBuf::from(p);
@@ -92,14 +121,15 @@ pub async fn launch_game(instance_id: &str) -> Result<String, String> {
     };
 
     let memory = meta.memory_mb.unwrap_or(settings.memory_mb).max(512);
+    let chain = resolve_version_chain(&version_id)?;
+    let merged = merge_versions(&chain)?;
+
     let java_pref = meta
         .java_path
         .as_deref()
         .filter(|s| !s.is_empty())
         .or(settings.java_path.as_deref());
-    let java = find_java(java_pref)?;
-    let chain = resolve_version_chain(&version_id)?;
-    let merged = merge_versions(&chain)?;
+    let java = resolve_java(java_pref, merged.java_version.as_ref())?;
 
     let game_dir = crate::paths::instances_dir().join(instance_id);
     fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;

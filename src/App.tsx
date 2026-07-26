@@ -100,14 +100,21 @@ type NewsItem = {
   read_more_url?: string;
 };
 
-type ContentKind = "mods" | "resourcepacks" | "shaders";
+type ContentKind = "mods" | "modpacks" | "resourcepacks" | "shaders";
 type VersionFilter = "release" | "snapshot" | "all";
-type LoaderKind = "vanilla" | "fabric" | "quilt" | "forge";
+type LoaderKind = "vanilla" | "fabric" | "quilt" | "forge" | "neoforge";
+
+type ManagedJava = {
+  component: string;
+  version: string;
+  path: string;
+  installed: boolean;
+};
 
 const TABS: { id: Tab; label: string; short: string }[] = [
   { id: "instances", label: "Instances", short: "Inst" },
   { id: "install", label: "Install", short: "Add" },
-  { id: "mods", label: "Mods", short: "Mods" },
+  { id: "mods", label: "Content", short: "Packs" },
   { id: "news", label: "News", short: "News" },
   { id: "account", label: "Account", short: "Acc" },
   { id: "settings", label: "Settings", short: "Set" },
@@ -372,6 +379,9 @@ export default function App() {
   const [quiltPick, setQuiltPick] = useState("");
   const [forgeList, setForgeList] = useState<ForgeEntry[]>([]);
   const [forgePick, setForgePick] = useState("");
+  const [neoList, setNeoList] = useState<ForgeEntry[]>([]);
+  const [neoPick, setNeoPick] = useState("");
+  const [managedJava, setManagedJava] = useState<ManagedJava[]>([]);
 
   const [offlineName, setOfflineName] = useState("");
   const [deviceMsg, setDeviceMsg] = useState<string | null>(null);
@@ -435,12 +445,13 @@ export default function App() {
       invoke<VersionManifest>("get_version_manifest"),
       invoke<InstanceInfo[]>("list_instances"),
       invoke<Settings>("get_settings"),
-      invoke<{ path: string | null; found: boolean }>("get_java_info"),
+      invoke<{ path: string | null; found: boolean; managed?: ManagedJava[] }>("get_java_info"),
     ]);
     setManifest(m);
     setInstances(list);
     setSettings(s);
     setJavaPath(java.path);
+    if (java.managed) setManagedJava(java.managed);
     if (typeof s.width === "number") setResW(s.width);
     if (typeof s.height === "number") setResH(s.height);
     if (typeof s.fullscreen === "boolean") setFullscreen(s.fullscreen);
@@ -624,6 +635,12 @@ export default function App() {
           gameVersionUrl: info.url,
           loaderVersion: quiltPick,
         });
+      } else if (loader === "neoforge") {
+        id = await invoke<string>("install_neoforge", {
+          mcVersion: installMc,
+          mcVersionUrl: info.url,
+          neoVersion: neoPick,
+        });
       } else {
         id = await invoke<string>("install_forge", {
           mcVersion: installMc,
@@ -672,6 +689,28 @@ export default function App() {
     setForgePick(list[0]?.raw ?? "");
   }
 
+  async function loadNeoForge() {
+    const list = await invoke<ForgeEntry[]>("list_neoforge_versions", {
+      mcVersion: installMc,
+    });
+    setNeoList(list.slice(0, 40));
+    setNeoPick(list[0]?.raw ?? "");
+  }
+
+  async function installManagedJava(component: string) {
+    setBusy(true);
+    setProgress(null);
+    try {
+      const info = await invoke<ManagedJava>("install_managed_java", { component });
+      showStatus(`Java ready: ${info.component} → ${info.path}`);
+      await refresh();
+    } catch (e) {
+      showStatus(String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (loader === "fabric" && installMc) {
       loadFabric().catch((e) => showStatus(String(e), true));
@@ -681,6 +720,9 @@ export default function App() {
     }
     if (loader === "forge" && installMc) {
       loadForge().catch((e) => showStatus(String(e), true));
+    }
+    if (loader === "neoforge" && installMc) {
+      loadNeoForge().catch((e) => showStatus(String(e), true));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loader, installMc]);
@@ -881,6 +923,11 @@ export default function App() {
           loader: loaderHint,
           gameVersion,
         });
+      } else if (contentKind === "modpacks") {
+        res = await invoke<{ hits: ModHit[] }>("search_modpacks", {
+          query: modQuery,
+          gameVersion: null,
+        });
       } else if (contentKind === "resourcepacks") {
         res = await invoke<{ hits: ModHit[] }>("search_resourcepacks", {
           query: modQuery,
@@ -901,12 +948,43 @@ export default function App() {
   }
 
   async function installContentFromHit(hit: ModHit) {
-    if (!selected) {
-      showStatus("Select an instance first", true);
-      return;
-    }
     setBusy(true);
+    setProgress(null);
     try {
+      if (contentKind === "modpacks") {
+        const versions = await invoke<ModVersion[]>("get_mod_versions", {
+          projectId: hit.project_id,
+          gameVersion: null,
+          loader: null,
+        });
+        const file =
+          versions[0]?.files.find((f) => f.filename.endsWith(".mrpack")) ??
+          versions[0]?.files.find((f) => f.primary) ??
+          versions[0]?.files[0];
+        if (!file) throw new Error("No .mrpack file found for this pack");
+        const result = await invoke<{
+          instance_id: string;
+          name: string;
+          game_version: string;
+          loader: string;
+        }>("install_mrpack", {
+          fileUrl: file.url,
+          name: hit.title,
+        });
+        showStatus(`Modpack installed: ${result.name}`);
+        const list = await refreshInstances();
+        setSelected(result.instance_id);
+        if (!list.find((i) => i.id === result.instance_id)) {
+          await refresh();
+        }
+        setTab("instances");
+        return;
+      }
+
+      if (!selected) {
+        showStatus("Select an instance first", true);
+        return;
+      }
       const loaderHint = loaderHintFromInstance(selectedInstance);
       const gameVersion = selectedInstance?.game_version ?? null;
       const versions = await invoke<ModVersion[]>("get_mod_versions", {
@@ -1320,7 +1398,7 @@ export default function App() {
             </label>
 
             <div className="chips" role="group" aria-label="Loader">
-              {(["vanilla", "fabric", "quilt", "forge"] as const).map((l) => (
+              {(["vanilla", "fabric", "quilt", "forge", "neoforge"] as const).map((l) => (
                 <button
                   key={l}
                   type="button"
@@ -1373,6 +1451,22 @@ export default function App() {
               </label>
             )}
 
+            {loader === "neoforge" && (
+              <label>
+                NeoForge
+                <select value={neoPick} onChange={(e) => setNeoPick(e.target.value)}>
+                  {neoList.length === 0 && (
+                    <option value="">No NeoForge builds for this MC version</option>
+                  )}
+                  {neoList.map((f) => (
+                    <option key={f.raw} value={f.raw}>
+                      {f.raw}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
             <button type="button" className="cta" disabled={busy} onClick={onInstall}>
               {busy ? "Installing…" : "Install"}
             </button>
@@ -1404,7 +1498,7 @@ export default function App() {
             </p>
 
             <div className="chips content-tabs" role="group" aria-label="Content type">
-              {(["mods", "resourcepacks", "shaders"] as const).map((k) => (
+              {(["mods", "modpacks", "resourcepacks", "shaders"] as const).map((k) => (
                 <button
                   key={k}
                   type="button"
@@ -1458,10 +1552,10 @@ export default function App() {
                   <button
                     type="button"
                     className="btn-sm"
-                    disabled={busy || !selected}
+                    disabled={busy || (contentKind !== "modpacks" && !selected)}
                     onClick={() => installContentFromHit(hit)}
                   >
-                    Install
+                    {contentKind === "modpacks" ? "Install pack" : "Install"}
                   </button>
                 </li>
               ))}
@@ -1651,13 +1745,49 @@ export default function App() {
                 <input
                   type="text"
                   value={settings.java_path ?? ""}
-                  placeholder="Auto-detect"
+                  placeholder="Auto-detect / managed"
                   onChange={(e) =>
                     setSettings({ ...settings, java_path: e.target.value || null })
                   }
                   onBlur={(e) => saveJavaPath(e.target.value)}
                 />
               </label>
+
+              <div className="full managed-java">
+                <h3>Managed Java (Mojang)</h3>
+                <p className="hint">
+                  Download the official runtime Cubera can use automatically — no Homebrew required.
+                </p>
+                <div className="managed-java-list">
+                  {(
+                    [
+                      ["java-runtime-delta", "Java 21 (recommended)"],
+                      ["java-runtime-gamma", "Java 17"],
+                      ["java-runtime-epsilon", "Java 25"],
+                    ] as const
+                  ).map(([comp, label]) => {
+                    const info = managedJava.find((j) => j.component === comp);
+                    return (
+                      <div key={comp} className="managed-java-row">
+                        <div>
+                          <strong>{label}</strong>
+                          <span className="hint">
+                            {info?.installed ? info.path || "Installed" : "Not installed"}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-sm"
+                          disabled={busy || Boolean(info?.installed)}
+                          onClick={() => installManagedJava(comp)}
+                        >
+                          {info?.installed ? "Ready" : "Download"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
 
               <label>
                 Width

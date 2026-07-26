@@ -3,10 +3,12 @@ mod branding;
 mod download;
 mod forge;
 mod instances;
+mod java_runtime;
 mod launch;
 mod loaders;
 mod manifest;
 mod modrinth;
+mod mrpack;
 mod news;
 mod paths;
 mod skin;
@@ -20,6 +22,7 @@ use std::process::Command;
 struct JavaInfo {
     path: Option<String>,
     found: bool,
+    managed: Vec<java_runtime::ManagedJavaInfo>,
 }
 
 #[tauri::command]
@@ -125,6 +128,53 @@ async fn install_quilt(
 }
 
 #[tauri::command]
+async fn list_neoforge_versions(
+    mc_version: Option<String>,
+) -> Result<Vec<loaders::ForgeVersionEntry>, String> {
+    loaders::list_neoforge_versions(mc_version).await
+}
+
+#[tauri::command]
+async fn install_neoforge(
+    app: tauri::AppHandle,
+    mc_version: String,
+    mc_version_url: String,
+    neo_version: String,
+) -> Result<String, String> {
+    loaders::install_neoforge(app, &mc_version, &mc_version_url, &neo_version).await
+}
+
+#[tauri::command]
+async fn search_modpacks(
+    query: String,
+    game_version: Option<String>,
+) -> Result<modrinth::ModrinthSearch, String> {
+    modrinth::search_modpacks(&query, game_version).await
+}
+
+#[tauri::command]
+async fn install_mrpack(
+    app: tauri::AppHandle,
+    file_url: String,
+    name: Option<String>,
+) -> Result<mrpack::MrPackInstallResult, String> {
+    mrpack::install_mrpack_url(app, &file_url, name).await
+}
+
+#[tauri::command]
+fn list_managed_java() -> Vec<java_runtime::ManagedJavaInfo> {
+    java_runtime::list_managed_java()
+}
+
+#[tauri::command]
+async fn install_managed_java(
+    app: tauri::AppHandle,
+    component: String,
+) -> Result<java_runtime::ManagedJavaInfo, String> {
+    java_runtime::install_java_component(app, &component).await
+}
+
+#[tauri::command]
 async fn start_microsoft_login() -> Result<auth::DeviceCodeResponse, String> {
     auth::start_device_login().await
 }
@@ -171,15 +221,29 @@ fn update_settings(settings: Settings) -> Result<(), String> {
 
 #[tauri::command]
 fn get_java_info() -> JavaInfo {
+    let managed = java_runtime::list_managed_java();
     match launch::find_java(load_settings().java_path.as_deref()) {
         Ok(path) => JavaInfo {
             path: Some(path.display().to_string()),
             found: true,
+            managed,
         },
-        Err(_) => JavaInfo {
-            path: None,
-            found: false,
-        },
+        Err(_) => {
+            // Prefer managed java if find_java failed
+            if let Some(m) = managed.iter().find(|m| m.installed) {
+                JavaInfo {
+                    path: Some(m.path.clone()),
+                    found: true,
+                    managed,
+                }
+            } else {
+                JavaInfo {
+                    path: None,
+                    found: false,
+                    managed,
+                }
+            }
+        }
     }
 }
 
@@ -358,6 +422,12 @@ pub fn run() {
             fetch_news,
             list_quilt_loaders,
             install_quilt,
+            list_neoforge_versions,
+            install_neoforge,
+            search_modpacks,
+            install_mrpack,
+            list_managed_java,
+            install_managed_java,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cubera");
