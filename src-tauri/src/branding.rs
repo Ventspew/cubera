@@ -4,14 +4,19 @@ use std::path::Path;
 
 const PACK_NAME: &str = "Cubera-Branding";
 const PACK_FILE: &str = "Cubera-Branding.zip";
+/// Bump when textures/splashes change so existing installs refresh.
+const PACK_REVISION: &str = "2";
 
 pub fn install_ingame_branding(game_dir: &Path) -> Result<(), String> {
     let packs_dir = game_dir.join("resourcepacks");
     fs::create_dir_all(&packs_dir).map_err(|e| e.to_string())?;
 
     let zip_path = packs_dir.join(PACK_FILE);
-    if !zip_path.exists() {
+    let stamp = packs_dir.join(".cubera-branding-rev");
+    let current = fs::read_to_string(&stamp).unwrap_or_default();
+    if current.trim() != PACK_REVISION || !zip_path.exists() {
         write_branding_pack(&zip_path)?;
+        fs::write(&stamp, PACK_REVISION).map_err(|e| e.to_string())?;
     }
 
     enable_resource_pack(game_dir)?;
@@ -27,7 +32,8 @@ fn write_branding_pack(zip_path: &Path) -> Result<(), String> {
     let mcmeta = r#"{
   "pack": {
     "pack_format": 34,
-    "description": "§6Cubera §7— mineral branding"
+    "supported_formats": { "min_inclusive": 15, "max_inclusive": 64 },
+    "description": "§6Cubera §8· §7mineral title branding"
   }
 }
 "#;
@@ -36,12 +42,19 @@ fn write_branding_pack(zip_path: &Path) -> Result<(), String> {
     zip.write_all(mcmeta.as_bytes())
         .map_err(|e| e.to_string())?;
 
+    let pack_icon = include_bytes!("../branding/pack.png");
+    zip.start_file("pack.png", options)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(pack_icon)
+        .map_err(|e| e.to_string())?;
+
     let splashes = include_str!("../branding/splashes.txt");
     zip.start_file("assets/minecraft/texts/splashes.txt", options)
         .map_err(|e| e.to_string())?;
     zip.write_all(splashes.as_bytes())
         .map_err(|e| e.to_string())?;
 
+    // Java Edition subtitle → VIA CUBERA
     let edition_png = include_bytes!("../branding/edition.png");
     zip.start_file(
         "assets/minecraft/textures/gui/title/edition.png",
@@ -51,6 +64,7 @@ fn write_branding_pack(zip_path: &Path) -> Result<(), String> {
     zip.write_all(edition_png)
         .map_err(|e| e.to_string())?;
 
+    // Rare title easter-egg slot
     let logo_png = include_bytes!("../branding/title_minceraft.png");
     zip.start_file(
         "assets/minecraft/textures/gui/title/minceraft.png",
@@ -58,6 +72,16 @@ fn write_branding_pack(zip_path: &Path) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     zip.write_all(logo_png)
+        .map_err(|e| e.to_string())?;
+
+    let lang_json = r#"{
+  "narrator.toast.caption": "Cubera",
+  "pack.source.local": "Cubera"
+}
+"#;
+    zip.start_file("assets/minecraft/lang/en_us.json", options)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(lang_json.as_bytes())
         .map_err(|e| e.to_string())?;
 
     zip.finish().map_err(|e| e.to_string())?;
@@ -103,7 +127,8 @@ fn merge_resource_packs_line(raw: &str, pack_ref: &str) -> String {
                         .collect()
                 };
                 if !entries.iter().any(|e| e.contains(PACK_NAME)) {
-                    entries.push(pack_ref.trim_matches('"').to_string());
+                    // Put Cubera first so it wins conflicts
+                    entries.insert(0, pack_ref.trim_matches('"').to_string());
                 }
                 *line = format!(
                     "resourcePacks:[{}]",
@@ -197,5 +222,6 @@ pub fn remove_branding_from_options(game_dir: &Path) -> Result<(), String> {
     let updated = updated.replace(&format!(",\"file/{PACK_FILE}\""), "");
     let updated = updated.replace(&format!("\"file/{PACK_FILE}\""), "");
     fs::write(&options_path, updated).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(game_dir.join("resourcepacks").join(".cubera-branding-rev"));
     Ok(())
 }
