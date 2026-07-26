@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "./App.css";
 
-type Tab = "home" | "play" | "install" | "mods" | "account" | "settings";
+type Tab = "instances" | "install" | "mods" | "news" | "account" | "settings";
 
 type VersionInfo = {
   id: string;
@@ -74,11 +74,41 @@ type ModVersion = {
   files: { url: string; filename: string; primary: boolean }[];
 };
 
+type InstanceInfo = {
+  id: string;
+  version_id: string;
+  name: string;
+  notes: string;
+  game_version?: string;
+  loader?: string;
+  memory_mb?: number;
+  jvm_args?: string;
+  java_path?: string;
+  last_played?: string;
+  play_count: number;
+  created_at?: string;
+  mod_count: number;
+  running: boolean;
+};
+
+type NewsItem = {
+  title: string;
+  tag: string;
+  date: string;
+  text: string;
+  image_url?: string;
+  read_more_url?: string;
+};
+
+type ContentKind = "mods" | "resourcepacks" | "shaders";
+type VersionFilter = "release" | "snapshot" | "all";
+type LoaderKind = "vanilla" | "fabric" | "quilt" | "forge";
+
 const TABS: { id: Tab; label: string; short: string }[] = [
-  { id: "home", label: "Home", short: "Home" },
-  { id: "play", label: "Play", short: "Play" },
-  { id: "install", label: "Install", short: "Inst" },
+  { id: "instances", label: "Instances", short: "Inst" },
+  { id: "install", label: "Install", short: "Add" },
   { id: "mods", label: "Mods", short: "Mods" },
+  { id: "news", label: "News", short: "News" },
   { id: "account", label: "Account", short: "Acc" },
   { id: "settings", label: "Settings", short: "Set" },
 ];
@@ -150,17 +180,10 @@ function NavGlyph({ id }: { id: Tab }) {
     "aria-hidden": true as const,
   };
   switch (id) {
-    case "home":
+    case "instances":
       return (
         <svg {...common}>
-          <path d="M2 6.5 7 2.5 12 6.5V12H2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-          <path d="M5 12V9h4v3" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-        </svg>
-      );
-    case "play":
-      return (
-        <svg {...common}>
-          <path d="M3 2.5 11 7 3 11.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+          <path d="M2 2h4v4H2zM8 2h4v4H8zM2 8h4v4H2zM8 8h4v4H8z" stroke="currentColor" strokeWidth="1.3" />
         </svg>
       );
     case "install":
@@ -173,6 +196,13 @@ function NavGlyph({ id }: { id: Tab }) {
       return (
         <svg {...common}>
           <path d="M3 4h3v3H3zM8 4h3v3H8zM3 9h3v3H3zM8 9h3v3H8z" stroke="currentColor" strokeWidth="1.3" />
+        </svg>
+      );
+    case "news":
+      return (
+        <svg {...common}>
+          <path d="M2 2.5h10v9H2z" stroke="currentColor" strokeWidth="1.3" />
+          <path d="M4 5h6M4 7.5h6M4 10h3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
         </svg>
       );
     case "account":
@@ -204,12 +234,42 @@ function PlateGeometry() {
   );
 }
 
-function instanceMeta(id: string) {
-  const lower = id.toLowerCase();
+function instanceMeta(loaderOrId: string) {
+  const lower = (loaderOrId || "").toLowerCase();
   if (lower.includes("fabric")) return { loader: "Fabric", kind: "Modded" };
+  if (lower.includes("quilt")) return { loader: "Quilt", kind: "Modded" };
+  if (lower.includes("neoforge")) return { loader: "NeoForge", kind: "Modded" };
   if (lower.includes("forge")) return { loader: "Forge", kind: "Modded" };
-  if (!id) return { loader: "—", kind: "No instance" };
+  if (!loaderOrId) return { loader: "—", kind: "No instance" };
+  if (lower === "vanilla" || lower.includes("release") || /^\d+\.\d+/.test(lower)) {
+    return { loader: "Vanilla", kind: "Release" };
+  }
   return { loader: "Vanilla", kind: "Release" };
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function formatPlayed(iso?: string): string {
+  if (!iso) return "Never";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
 
 function SkinAvatar({
@@ -281,10 +341,20 @@ async function invokeOk(cmd: string, args?: Record<string, unknown>): Promise<bo
   }
 }
 
+function loaderHintFromInstance(inst: InstanceInfo | null | undefined): string | undefined {
+  if (!inst) return undefined;
+  const raw = (inst.loader || inst.version_id || inst.id).toLowerCase();
+  if (raw.includes("fabric")) return "fabric";
+  if (raw.includes("quilt")) return "quilt";
+  if (raw.includes("neoforge")) return "neoforge";
+  if (raw.includes("forge")) return "forge";
+  return undefined;
+}
+
 export default function App() {
-  const [tab, setTab] = useState<Tab>("home");
+  const [tab, setTab] = useState<Tab>("instances");
   const [manifest, setManifest] = useState<VersionManifest | null>(null);
-  const [installed, setInstalled] = useState<string[]>([]);
+  const [instances, setInstances] = useState<InstanceInfo[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selected, setSelected] = useState<string>("");
   const [status, setStatus] = useState("");
@@ -294,9 +364,12 @@ export default function App() {
   const [javaPath, setJavaPath] = useState<string | null>(null);
 
   const [installMc, setInstallMc] = useState("");
-  const [loader, setLoader] = useState<"vanilla" | "fabric" | "forge">("vanilla");
+  const [versionFilter, setVersionFilter] = useState<VersionFilter>("release");
+  const [loader, setLoader] = useState<LoaderKind>("vanilla");
   const [fabricLoaders, setFabricLoaders] = useState<FabricLoader[]>([]);
   const [fabricPick, setFabricPick] = useState("");
+  const [quiltLoaders, setQuiltLoaders] = useState<FabricLoader[]>([]);
+  const [quiltPick, setQuiltPick] = useState("");
   const [forgeList, setForgeList] = useState<ForgeEntry[]>([]);
   const [forgePick, setForgePick] = useState("");
 
@@ -310,9 +383,19 @@ export default function App() {
     onConfirm: () => Promise<void>;
   } | null>(null);
 
+  const [contentKind, setContentKind] = useState<ContentKind>("mods");
   const [modQuery, setModQuery] = useState("");
   const [modHits, setModHits] = useState<ModHit[]>([]);
   const [instanceMods, setInstanceMods] = useState<string[]>([]);
+
+  const [news, setNews] = useState<NewsItem[]>([]);
+  const [newsLoading, setNewsLoading] = useState(false);
+
+  const [editName, setEditName] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editMemory, setEditMemory] = useState("");
+  const [editJvm, setEditJvm] = useState("");
+  const [selectedRunning, setSelectedRunning] = useState(false);
 
   const [resW, setResW] = useState(1280);
   const [resH, setResH] = useState(720);
@@ -331,31 +414,44 @@ export default function App() {
     );
   }, [settings]);
 
+  const selectedInstance = useMemo(
+    () => instances.find((i) => i.id === selected) ?? null,
+    [instances, selected],
+  );
+
   const showStatus = useCallback((msg: string, isError = false) => {
     setStatus(msg);
     setStatusError(isError);
   }, []);
 
+  const refreshInstances = useCallback(async () => {
+    const list = await invoke<InstanceInfo[]>("list_instances");
+    setInstances(list);
+    return list;
+  }, []);
+
   const refresh = useCallback(async () => {
-    const [m, inst, s, java] = await Promise.all([
+    const [m, list, s, java] = await Promise.all([
       invoke<VersionManifest>("get_version_manifest"),
-      invoke<string[]>("get_installed_versions"),
+      invoke<InstanceInfo[]>("list_instances"),
       invoke<Settings>("get_settings"),
       invoke<{ path: string | null; found: boolean }>("get_java_info"),
     ]);
     setManifest(m);
-    setInstalled(inst);
+    setInstances(list);
     setSettings(s);
     setJavaPath(java.path);
     if (typeof s.width === "number") setResW(s.width);
     if (typeof s.height === "number") setResH(s.height);
     if (typeof s.fullscreen === "boolean") setFullscreen(s.fullscreen);
     if (typeof s.jvm_args === "string") setJvmArgs(s.jvm_args);
+
+    const ids = list.map((i) => i.id);
     const initial =
-      s.last_version && inst.includes(s.last_version)
+      s.last_version && ids.includes(s.last_version)
         ? s.last_version
-        : inst[0] ?? m.latest.release;
-    setSelected((prev) => prev || initial);
+        : list[0]?.id ?? "";
+    setSelected((prev) => (prev && ids.includes(prev) ? prev : initial));
     setInstallMc((prev) => prev || m.latest.release);
   }, []);
 
@@ -372,17 +468,94 @@ export default function App() {
   }, [refresh, showStatus]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedInstance) {
+      setEditName("");
+      setEditNotes("");
+      setEditMemory("");
+      setEditJvm("");
+      setSelectedRunning(false);
+      return;
+    }
+    setEditName(selectedInstance.name);
+    setEditNotes(selectedInstance.notes ?? "");
+    setEditMemory(
+      selectedInstance.memory_mb != null ? String(selectedInstance.memory_mb) : "",
+    );
+    setEditJvm(selectedInstance.jvm_args ?? "");
+    setSelectedRunning(selectedInstance.running);
+  }, [selectedInstance?.id, selectedInstance?.name, selectedInstance?.notes, selectedInstance?.memory_mb, selectedInstance?.jvm_args, selectedInstance?.running]);
+
+  useEffect(() => {
+    if (!selected) {
+      setInstanceMods([]);
+      return;
+    }
     invoke<string[]>("list_mods", { instanceId: selected })
       .then(setInstanceMods)
       .catch(() => setInstanceMods([]));
   }, [selected]);
 
-  const releases = useMemo(
-    () =>
-      manifest?.versions.filter((v) => v.type === "release").slice(0, 40) ?? [],
-    [manifest],
-  );
+  useEffect(() => {
+    if (!selected) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const running = await invoke<boolean>("is_instance_running", {
+          instanceId: selected,
+        });
+        if (!cancelled) {
+          setSelectedRunning(running);
+          setInstances((prev) =>
+            prev.map((i) => (i.id === selected ? { ...i, running } : i)),
+          );
+        }
+      } catch {
+        /* ignore poll errors */
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [selected]);
+
+  useEffect(() => {
+    if (tab !== "news") return;
+    let cancelled = false;
+    setNewsLoading(true);
+    invoke<NewsItem[]>("fetch_news")
+      .then((items) => {
+        if (!cancelled) setNews(items);
+      })
+      .catch((e) => {
+        if (!cancelled) showStatus(String(e), true);
+      })
+      .finally(() => {
+        if (!cancelled) setNewsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, showStatus]);
+
+  const filteredVersions = useMemo(() => {
+    if (!manifest) return [];
+    const all = manifest.versions;
+    const filtered =
+      versionFilter === "all"
+        ? all
+        : all.filter((v) => v.type === versionFilter);
+    return filtered.slice(0, 80);
+  }, [manifest, versionFilter]);
+
+  useEffect(() => {
+    if (filteredVersions.length === 0) return;
+    if (!filteredVersions.some((v) => v.id === installMc)) {
+      setInstallMc(filteredVersions[0].id);
+    }
+  }, [filteredVersions, installMc]);
 
   async function persistSettings(next: Settings) {
     await invoke("update_settings", { settings: next });
@@ -398,7 +571,24 @@ export default function App() {
       if (settings) {
         await persistSettings({ ...settings, last_version: selected });
       }
+      setSelectedRunning(true);
       showStatus(msg);
+      await refreshInstances();
+    } catch (e) {
+      showStatus(String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onKill() {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      await invoke("kill_instance", { instanceId: selected });
+      setSelectedRunning(false);
+      showStatus("Instance stopped");
+      await refreshInstances();
     } catch (e) {
       showStatus(String(e), true);
     } finally {
@@ -428,6 +618,12 @@ export default function App() {
           gameVersionUrl: info.url,
           loaderVersion: fabricPick,
         });
+      } else if (loader === "quilt") {
+        id = await invoke<string>("install_quilt", {
+          gameVersion: installMc,
+          gameVersionUrl: info.url,
+          loaderVersion: quiltPick,
+        });
       } else {
         id = await invoke<string>("install_forge", {
           mcVersion: installMc,
@@ -436,9 +632,11 @@ export default function App() {
         });
       }
       showStatus(`Installed: ${id}`);
+      const list = await refreshInstances();
       await refresh();
-      setSelected(id);
-      setTab("play");
+      const pick = list.find((i) => i.id === id)?.id ?? id;
+      setSelected(pick);
+      setTab("instances");
     } catch (e) {
       showStatus(String(e), true);
     } finally {
@@ -456,6 +654,16 @@ export default function App() {
     setFabricPick(stable?.version ?? "");
   }
 
+  async function loadQuilt() {
+    if (!installMc) return;
+    const list = await invoke<FabricLoader[]>("list_quilt_loaders", {
+      gameVersion: installMc,
+    });
+    setQuiltLoaders(list);
+    const stable = list.find((l) => l.stable) ?? list[0];
+    setQuiltPick(stable?.version ?? "");
+  }
+
   async function loadForge() {
     const list = await invoke<ForgeEntry[]>("list_forge_versions", {
       mcVersion: installMc,
@@ -467,6 +675,9 @@ export default function App() {
   useEffect(() => {
     if (loader === "fabric" && installMc) {
       loadFabric().catch((e) => showStatus(String(e), true));
+    }
+    if (loader === "quilt" && installMc) {
+      loadQuilt().catch((e) => showStatus(String(e), true));
     }
     if (loader === "forge" && installMc) {
       loadForge().catch((e) => showStatus(String(e), true));
@@ -507,7 +718,7 @@ export default function App() {
       setDeviceUri(null);
       showStatus(`Signed in as ${account.name}`);
       await refresh();
-      setTab("play");
+      setTab("instances");
     } catch (e) {
       showStatus(String(e), true);
     } finally {
@@ -533,7 +744,7 @@ export default function App() {
     const ok = await invokeOk("set_active_account", { uuid });
     if (ok) {
       await refresh();
-      showStatus(`Active account updated`);
+      showStatus("Active account updated");
       return;
     }
     await persistSettings({ ...settings, active_account: uuid });
@@ -568,42 +779,119 @@ export default function App() {
     if (!selected) return;
     const ok = await tryInvoke("open_instance_folder", { instanceId: selected });
     if (ok === null) {
-      showStatus("Opening folder is not available yet", true);
+      showStatus("Could not open instance folder", true);
     }
+  }
+
+  async function openSubfolder(folder: string) {
+    if (!selected) return;
+    const ok = await invokeOk("open_instance_subfolder", {
+      instanceId: selected,
+      folder,
+    });
+    if (!ok) showStatus(`Could not open ${folder}`, true);
+  }
+
+  async function saveInstanceFields() {
+    if (!selectedInstance) return;
+    setBusy(true);
+    try {
+      const memoryRaw = editMemory.trim();
+      const memory_mb =
+        memoryRaw === "" ? undefined : Number.parseInt(memoryRaw, 10);
+      if (memoryRaw !== "" && (Number.isNaN(memory_mb!) || memory_mb! < 512)) {
+        showStatus("Memory must be empty (use global) or at least 512 MB", true);
+        return;
+      }
+      const meta = {
+        id: selectedInstance.id,
+        version_id: selectedInstance.version_id,
+        name: editName.trim() || selectedInstance.id,
+        notes: editNotes,
+        game_version: selectedInstance.game_version,
+        loader: selectedInstance.loader,
+        memory_mb,
+        jvm_args: editJvm.trim() || undefined,
+        java_path: selectedInstance.java_path,
+        last_played: selectedInstance.last_played,
+        play_count: selectedInstance.play_count,
+        created_at: selectedInstance.created_at,
+      };
+      await invoke("update_instance", { meta });
+      showStatus("Instance saved");
+      await refreshInstances();
+    } catch (e) {
+      showStatus(String(e), true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function duplicateSelected() {
+    if (!selectedInstance) return;
+    const base = selectedInstance.name || selectedInstance.id;
+    const newName = `${base} copy`;
+    setConfirmAction({
+      title: "Duplicate instance",
+      body: `Create a copy named “${newName}”?`,
+      onConfirm: async () => {
+        const id = await invoke<string>("duplicate_instance", {
+          instanceId: selectedInstance.id,
+          newName,
+        });
+        showStatus(`Duplicated as ${id}`);
+        await refreshInstances();
+        setSelected(id);
+      },
+    });
   }
 
   function deleteInstance() {
     if (!selected) return;
     const id = selected;
+    const name = selectedInstance?.name ?? id;
     setConfirmAction({
       title: "Delete instance",
-      body: `Delete instance “${id}”?`,
+      body: `Delete instance “${name}”? This cannot be undone.`,
       onConfirm: async () => {
         const ok = await invokeOk("delete_instance", { instanceId: id });
         if (!ok) {
-          showStatus("Deleting instances is not available yet", true);
+          showStatus("Could not delete instance", true);
           return;
         }
-        showStatus(`Instance deleted: ${id}`);
+        showStatus(`Instance deleted: ${name}`);
         setSelected("");
-        await refresh();
+        await refreshInstances();
       },
     });
   }
 
-  async function searchMods() {
+  async function searchContent() {
+    if (!selectedInstance && contentKind === "mods") {
+      /* still allow search without instance, but install needs one */
+    }
     setBusy(true);
     try {
-      const loaderHint = selected.toLowerCase().includes("fabric")
-        ? "fabric"
-        : selected.toLowerCase().includes("forge")
-          ? "forge"
-          : undefined;
-      const res = await invoke<{ hits: ModHit[] }>("search_mods", {
-        query: modQuery,
-        loader: loaderHint,
-        gameVersion: null,
-      });
+      const gameVersion = selectedInstance?.game_version ?? null;
+      const loaderHint = loaderHintFromInstance(selectedInstance);
+      let res: { hits: ModHit[] };
+      if (contentKind === "mods") {
+        res = await invoke<{ hits: ModHit[] }>("search_mods", {
+          query: modQuery,
+          loader: loaderHint,
+          gameVersion,
+        });
+      } else if (contentKind === "resourcepacks") {
+        res = await invoke<{ hits: ModHit[] }>("search_resourcepacks", {
+          query: modQuery,
+          gameVersion,
+        });
+      } else {
+        res = await invoke<{ hits: ModHit[] }>("search_shaders", {
+          query: modQuery,
+          gameVersion,
+        });
+      }
       setModHits(res.hits);
     } catch (e) {
       showStatus(String(e), true);
@@ -612,29 +900,42 @@ export default function App() {
     }
   }
 
-  async function installModFromHit(hit: ModHit) {
-    if (!selected) return;
+  async function installContentFromHit(hit: ModHit) {
+    if (!selected) {
+      showStatus("Select an instance first", true);
+      return;
+    }
     setBusy(true);
     try {
-      const loaderHint = selected.toLowerCase().includes("fabric")
-        ? "fabric"
-        : selected.toLowerCase().includes("forge")
-          ? "forge"
-          : undefined;
+      const loaderHint = loaderHintFromInstance(selectedInstance);
+      const gameVersion = selectedInstance?.game_version ?? null;
       const versions = await invoke<ModVersion[]>("get_mod_versions", {
         projectId: hit.project_id,
-        gameVersion: null,
-        loader: loaderHint,
+        gameVersion,
+        loader: contentKind === "mods" ? loaderHint : null,
       });
       const file = versions[0]?.files.find((f) => f.primary) ?? versions[0]?.files[0];
       if (!file) throw new Error("No downloadable file found");
-      await invoke("install_mod", {
-        instanceId: selected,
-        fileUrl: file.url,
-        filename: file.filename,
-      });
+
+      if (contentKind === "mods") {
+        await invoke("install_mod", {
+          instanceId: selected,
+          fileUrl: file.url,
+          filename: file.filename,
+        });
+        setInstanceMods(await invoke("list_mods", { instanceId: selected }));
+      } else {
+        const folder =
+          contentKind === "resourcepacks" ? "resourcepacks" : "shaderpacks";
+        await invoke("install_content", {
+          instanceId: selected,
+          folder,
+          fileUrl: file.url,
+          filename: file.filename,
+        });
+      }
       showStatus(`Installed: ${file.filename}`);
-      setInstanceMods(await invoke("list_mods", { instanceId: selected }));
+      await refreshInstances();
     } catch (e) {
       showStatus(String(e), true);
     } finally {
@@ -651,11 +952,12 @@ export default function App() {
       onConfirm: async () => {
         const ok = await invokeOk("delete_mod", { instanceId, filename });
         if (!ok) {
-          showStatus("Removing mods is not available yet", true);
+          showStatus("Could not remove mod", true);
           return;
         }
         showStatus(`Mod removed: ${filename}`);
         setInstanceMods(await invoke("list_mods", { instanceId }));
+        await refreshInstances();
       },
     });
   }
@@ -714,8 +1016,11 @@ export default function App() {
     ? Math.min(100, (100 * progress.current) / progress.total)
     : 8;
 
-  const selectedMeta = instanceMeta(selected);
-  const launchReady = Boolean(selected && activeAccount && !busy);
+  const plateMeta = instanceMeta(
+    selectedInstance?.loader || selectedInstance?.version_id || selected,
+  );
+  const launchReady = Boolean(selected && activeAccount && !busy && !selectedRunning);
+  const isRunning = selectedRunning || Boolean(selectedInstance?.running);
 
   return (
     <div className="shell">
@@ -761,187 +1066,226 @@ export default function App() {
       </aside>
 
       <main className="stage">
-        {tab === "home" && (
-          <section className="home-dashboard" key="home">
-            <header className="home-hero">
-              <div className="home-mark">
-                <CuberaLogo size={72} className="hero-mark" />
-                <div>
-                  <h1>Cubera</h1>
-                  <p className="home-version">
-                    v{appInfo?.version ?? "0.1.0"} — {appInfo?.tagline ?? "Minecraft launcher"}
-                  </p>
-                </div>
-              </div>
-              <p className="home-intro">
-                Welcome back{activeAccount ? `, ${activeAccount.name}` : ""}. Your mineral workbench for
-                vanilla, Fabric, Forge, and Modrinth — with in-game Cubera branding.
-              </p>
-            </header>
-
-            <div className="home-stats">
-              <div className="stat-card">
-                <span className="stat-label">Instances</span>
-                <strong>{installed.length}</strong>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">Mods (active)</span>
-                <strong>{instanceMods.length}</strong>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">Java</span>
-                <strong className={javaPath ? "ok" : "warn"}>{javaPath ? "Gereed" : "Ontbreekt"}</strong>
-              </div>
-              <div className="stat-card">
-                <span className="stat-label">Branding</span>
-                <strong>{settings?.ingame_branding !== false ? "On" : "Off"}</strong>
-              </div>
-            </div>
-
-            <div className="home-actions">
-              <button type="button" className="home-card" onClick={() => setTab("play")}>
-                <span className="card-eyebrow">Play</span>
-                <strong>{selected || "Choose instance"}</strong>
-                <span>{launchReady ? "Ready to launch" : "Account or instance required"}</span>
-              </button>
-              <button type="button" className="home-card" onClick={() => setTab("install")}>
-                <span className="card-eyebrow">Install</span>
-                <strong>{manifest?.latest.release ?? "—"}</strong>
-                <span>Vanilla, Fabric, or Forge</span>
-              </button>
-              <button type="button" className="home-card" onClick={() => setTab("mods")}>
-                <span className="card-eyebrow">Mods</span>
-                <strong>Modrinth</strong>
-                <span>Search &amp; install</span>
-              </button>
-              <button type="button" className="home-card" onClick={() => setTab("account")}>
-                <span className="card-eyebrow">Account</span>
-                <strong>{activeAccount?.name ?? "Sign in"}</strong>
-                <span>{activeAccount?.offline ? "Offline profile" : "Microsoft or offline"}</span>
-              </button>
-            </div>
-
-            <div className="home-panels">
-              <div className="home-panel">
-                <h3>What&apos;s new</h3>
-                <ul className="plain changelog">
-                  <li>Refined Cubera logo with copper glow and facets</li>
-                  <li>In-game branding via resource pack (subtitle &amp; splashes)</li>
-                  <li>Home dashboard with quick stats</li>
-                  <li>Launch log viewer in Settings</li>
-                </ul>
-              </div>
-              <div className="home-panel accent">
-                <h3>Quick launch</h3>
-                <p className="hint">Instance: <strong>{selected || "none"}</strong></p>
+        {tab === "instances" && (
+          <section className="instances-view" key="instances">
+            {instances.length === 0 ? (
+              <div className="instances-empty">
+                <CuberaLogo size={64} className="hero-mark" />
+                <h2 className="section-head">No instances yet</h2>
+                <p className="section-sub">
+                  Install Minecraft with vanilla, Fabric, Quilt, or Forge to get started.
+                </p>
                 <button
                   type="button"
                   className="cta launch"
-                  disabled={!launchReady}
-                  onClick={onLaunch}
+                  onClick={() => setTab("install")}
                 >
-                  {busy ? "Working…" : "Launch Minecraft"}
+                  Install Minecraft
                 </button>
               </div>
-            </div>
-          </section>
-        )}
-
-        {tab === "play" && (
-          <section className="play-hero" key="play">
-            <div className="play-left">
-              <div className="play-brand">
-                <div className="mark-row">
-                  <CuberaLogo size={56} className="hero-mark" />
-                  <h1>Cubera</h1>
-                </div>
-                <p className="tagline">
-                  Precision instrument for macOS — vanilla, Fabric, Forge &amp; Modrinth.
-                </p>
-              </div>
-
-              <div className="play-controls">
-                <div className="play-row">
-                  <label>
-                    Instance
-                    <select
-                      value={selected}
-                      onChange={(e) => setSelected(e.target.value)}
+            ) : (
+              <div className="instances-layout">
+                <div className="instances-main">
+                  <header className="instances-head">
+                    <div>
+                      <h2 className="section-head">Instances</h2>
+                      <p className="section-sub">
+                        {instances.length} instance{instances.length === 1 ? "" : "s"} ·{" "}
+                        {appInfo?.tagline ?? "Minecraft launcher"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="cta secondary"
+                      onClick={() => setTab("install")}
                     >
-                      {installed.length === 0 && (
-                        <option value="">No installs yet — go to Install</option>
+                      New install
+                    </button>
+                  </header>
+
+                  <div className="instances-grid" role="list">
+                    {instances.map((inst) => {
+                      const meta = instanceMeta(inst.loader || inst.version_id || inst.id);
+                      const active = inst.id === selected;
+                      return (
+                        <button
+                          key={inst.id}
+                          type="button"
+                          role="listitem"
+                          className={active ? "instance-card on" : "instance-card"}
+                          onClick={() => setSelected(inst.id)}
+                        >
+                          <div className="instance-card-top">
+                            <strong className="instance-card-name">{inst.name || inst.id}</strong>
+                            {(inst.running || (active && isRunning)) && (
+                              <span className="running-badge">Running</span>
+                            )}
+                          </div>
+                          <div className="instance-card-meta">
+                            <span className="meta-chip accent">{meta.loader}</span>
+                            <span className="meta-chip">
+                              {inst.game_version || inst.version_id || "—"}
+                            </span>
+                            <span className="meta-chip">
+                              {inst.mod_count} mod{inst.mod_count === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                          <p className="instance-card-played">
+                            Last played: {formatPlayed(inst.last_played)}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {selectedInstance && (
+                  <aside className="instance-detail" aria-label="Instance details">
+                    <div className="instance-plate detail-plate">
+                      <PlateGeometry />
+                      <div>
+                        <p className="plate-eyebrow">Selected instance</p>
+                        <h2 className="plate-title">
+                          {selectedInstance.name || selectedInstance.id}
+                        </h2>
+                        <div className="plate-meta">
+                          <span className="meta-chip accent">{plateMeta.loader}</span>
+                          <span className="meta-chip">
+                            {selectedInstance.game_version || selectedInstance.version_id}
+                          </span>
+                          <span className="meta-chip">
+                            {selectedInstance.mod_count} mod
+                            {selectedInstance.mod_count === 1 ? "" : "s"}
+                          </span>
+                          {isRunning && <span className="meta-chip running">Running</span>}
+                        </div>
+                      </div>
+                      <div className="plate-foot">
+                        <div className="play-glance">
+                          <SkinAvatar account={activeAccount} sizeClass="skin" />
+                          <div className="info">
+                            <strong>{activeAccount?.name ?? "No account"}</strong>
+                            <span>
+                              {activeAccount
+                                ? activeAccount.offline
+                                  ? "Offline"
+                                  : "Microsoft"
+                                : "Sign in to play"}
+                            </span>
+                          </div>
+                        </div>
+                        <span className={`plate-status ${launchReady || isRunning ? "ready" : "warn"}`}>
+                          {isRunning ? "Live" : launchReady ? "Ready" : "Waiting"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="instance-actions">
+                      {isRunning ? (
+                        <button
+                          type="button"
+                          className="cta danger-cta"
+                          disabled={busy}
+                          onClick={onKill}
+                        >
+                          Kill
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="cta launch"
+                          disabled={!launchReady}
+                          onClick={onLaunch}
+                        >
+                          {busy ? "Working…" : "Launch"}
+                        </button>
                       )}
-                      {installed.map((id) => (
-                        <option key={id} value={id}>
-                          {id}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="cta launch"
-                    disabled={busy || !selected || !activeAccount}
-                    onClick={onLaunch}
-                  >
-                    {busy ? "Working…" : "Launch"}
-                  </button>
-                </div>
+                      <button type="button" className="cta ghost" onClick={openInstanceFolder}>
+                        Open folder
+                      </button>
+                    </div>
 
-                {selected && (
-                  <div className="instance-actions">
-                    <button type="button" className="cta ghost" onClick={openInstanceFolder}>
-                      Open folder
-                    </button>
-                    <button type="button" className="cta ghost" onClick={deleteInstance}>
-                      Delete
-                    </button>
-                  </div>
+                    <div className="content-tabs subfolder-tabs" role="group" aria-label="Folders">
+                      <button type="button" className="chip" onClick={() => openSubfolder("mods")}>
+                        Mods
+                      </button>
+                      <button type="button" className="chip" onClick={() => openSubfolder("saves")}>
+                        Saves
+                      </button>
+                      <button
+                        type="button"
+                        className="chip"
+                        onClick={() => openSubfolder("screenshots")}
+                      >
+                        Screenshots
+                      </button>
+                    </div>
+
+                    <div className="instance-edit">
+                      <label>
+                        Name
+                        <input
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Notes
+                        <textarea
+                          className="instance-notes"
+                          rows={3}
+                          value={editNotes}
+                          onChange={(e) => setEditNotes(e.target.value)}
+                          placeholder="Optional notes…"
+                        />
+                      </label>
+                      <label>
+                        Memory (MB)
+                        <input
+                          type="number"
+                          min={512}
+                          step={512}
+                          value={editMemory}
+                          onChange={(e) => setEditMemory(e.target.value)}
+                          placeholder={`Global (${settings?.memory_mb ?? 4096})`}
+                        />
+                      </label>
+                      <label>
+                        JVM arguments
+                        <input
+                          value={editJvm}
+                          onChange={(e) => setEditJvm(e.target.value)}
+                          placeholder="Optional override…"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="cta secondary"
+                        disabled={busy}
+                        onClick={saveInstanceFields}
+                      >
+                        Save
+                      </button>
+                    </div>
+
+                    <div className="instance-actions secondary-actions">
+                      <button type="button" className="cta ghost" onClick={duplicateSelected}>
+                        Duplicate
+                      </button>
+                      <button type="button" className="cta ghost" onClick={deleteInstance}>
+                        Delete
+                      </button>
+                    </div>
+
+                    {!activeAccount && (
+                      <p className="hint">
+                        Add an account first (Microsoft or offline) under Account.
+                      </p>
+                    )}
+                  </aside>
                 )}
-
-                {!activeAccount && (
-                  <p className="hint">
-                    Add an account first (Microsoft or offline) under Account.
-                  </p>
-                )}
               </div>
-            </div>
-
-            <aside className="instance-plate" aria-label="Instance overview">
-              <PlateGeometry />
-              <div>
-                <p className="plate-eyebrow">Selected instance</p>
-                <h2 className="plate-title">{selected || "No instance"}</h2>
-                <div className="plate-meta">
-                  <span className="meta-chip accent">{selectedMeta.loader}</span>
-                  <span className="meta-chip">{selectedMeta.kind}</span>
-                  <span className="meta-chip">
-                    {instanceMods.length} mod{instanceMods.length === 1 ? "" : "s"}
-                  </span>
-                  <span className="meta-chip">
-                    {javaPath ? "Java OK" : "Java?"}
-                  </span>
-                </div>
-              </div>
-              <div className="plate-foot">
-                <div className="play-glance">
-                  <SkinAvatar account={activeAccount} sizeClass="skin" />
-                  <div className="info">
-                    <strong>{activeAccount?.name ?? "No account"}</strong>
-                    <span>
-                      {activeAccount
-                        ? activeAccount.offline
-                          ? "Offline"
-                          : "Microsoft"
-                        : "Sign in to play"}
-                    </span>
-                  </div>
-                </div>
-                <span className={`plate-status ${launchReady ? "ready" : "warn"}`}>
-                  {launchReady ? "Ready" : "Waiting"}
-                </span>
-              </div>
-            </aside>
+            )}
           </section>
         )}
 
@@ -950,19 +1294,33 @@ export default function App() {
             <h2 className="section-head">Install</h2>
             <p className="section-sub">Choose a Minecraft version and loader.</p>
 
+            <div className="chips content-tabs" role="group" aria-label="Version type">
+              {(["release", "snapshot", "all"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={versionFilter === f ? "chip on" : "chip"}
+                  onClick={() => setVersionFilter(f)}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+
             <label>
               Minecraft
               <select value={installMc} onChange={(e) => setInstallMc(e.target.value)}>
-                {releases.map((v) => (
+                {filteredVersions.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.id}
+                    {v.type !== "release" ? ` (${v.type})` : ""}
                   </option>
                 ))}
               </select>
             </label>
 
             <div className="chips" role="group" aria-label="Loader">
-              {(["vanilla", "fabric", "forge"] as const).map((l) => (
+              {(["vanilla", "fabric", "quilt", "forge"] as const).map((l) => (
                 <button
                   key={l}
                   type="button"
@@ -976,9 +1334,23 @@ export default function App() {
 
             {loader === "fabric" && (
               <label>
-                Fabric-loader
+                Fabric loader
                 <select value={fabricPick} onChange={(e) => setFabricPick(e.target.value)}>
                   {fabricLoaders.map((l) => (
+                    <option key={l.version} value={l.version}>
+                      {l.version}
+                      {l.stable ? " (stable)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {loader === "quilt" && (
+              <label>
+                Quilt loader
+                <select value={quiltPick} onChange={(e) => setQuiltPick(e.target.value)}>
+                  {quiltLoaders.map((l) => (
                     <option key={l.version} value={l.version}>
                       {l.version}
                       {l.stable ? " (stable)" : ""}
@@ -1020,24 +1392,45 @@ export default function App() {
 
         {tab === "mods" && (
           <section className="panel" key="mods">
-            <h2 className="section-head">Mods</h2>
+            <h2 className="section-head">Content</h2>
             <p className="section-sub">
               Search Modrinth for instance{" "}
-              <strong style={{ color: "var(--text)" }}>{selected || "—"}</strong>
+              <strong style={{ color: "var(--text)" }}>
+                {selectedInstance?.name || selected || "—"}
+              </strong>
+              {selectedInstance?.game_version
+                ? ` · ${selectedInstance.game_version}`
+                : ""}
             </p>
+
+            <div className="chips content-tabs" role="group" aria-label="Content type">
+              {(["mods", "resourcepacks", "shaders"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={contentKind === k ? "chip on" : "chip"}
+                  onClick={() => {
+                    setContentKind(k);
+                    setModHits([]);
+                  }}
+                >
+                  {k === "resourcepacks" ? "resource packs" : k}
+                </button>
+              ))}
+            </div>
 
             <div className="row">
               <input
                 value={modQuery}
                 onChange={(e) => setModQuery(e.target.value)}
                 placeholder="Search Modrinth…"
-                onKeyDown={(e) => e.key === "Enter" && searchMods()}
+                onKeyDown={(e) => e.key === "Enter" && searchContent()}
               />
               <button
                 type="button"
                 className="cta secondary"
                 disabled={busy}
-                onClick={searchMods}
+                onClick={searchContent}
               >
                 Search
               </button>
@@ -1066,7 +1459,7 @@ export default function App() {
                     type="button"
                     className="btn-sm"
                     disabled={busy || !selected}
-                    onClick={() => installModFromHit(hit)}
+                    onClick={() => installContentFromHit(hit)}
                   >
                     Install
                   </button>
@@ -1074,9 +1467,9 @@ export default function App() {
               ))}
             </ul>
 
-            {instanceMods.length > 0 && (
+            {contentKind === "mods" && instanceMods.length > 0 && (
               <div className="list-block">
-                <h3>Installed</h3>
+                <h3>Installed mods</h3>
                 <ul className="plain mod-installed">
                   {instanceMods.map((m) => (
                     <li key={m}>
@@ -1095,6 +1488,52 @@ export default function App() {
                 </ul>
               </div>
             )}
+          </section>
+        )}
+
+        {tab === "news" && (
+          <section className="panel news-panel" key="news">
+            <h2 className="section-head">News</h2>
+            <p className="section-sub">Latest from Minecraft.</p>
+
+            {newsLoading && <p className="hint">Loading news…</p>}
+            {!newsLoading && news.length === 0 && (
+              <p className="hint">No news available right now.</p>
+            )}
+
+            <div className="news-list">
+              {news.map((item, idx) => (
+                <article key={`${item.title}-${idx}`} className="news-card">
+                  {item.image_url && (
+                    <img className="news-image" src={item.image_url} alt="" />
+                  )}
+                  <div className="news-body">
+                    <div className="news-meta">
+                      <span className="meta-chip accent">{item.tag}</span>
+                      {item.date && <span className="news-date">{item.date}</span>}
+                    </div>
+                    <h3>{item.title}</h3>
+                    <p>
+                      {(() => {
+                        const plain = stripHtml(item.text);
+                        return plain.length > 280
+                          ? `${plain.slice(0, 280)}…`
+                          : plain;
+                      })()}
+                    </p>
+                    {item.read_more_url && (
+                      <button
+                        type="button"
+                        className="cta ghost"
+                        onClick={() => openUrl(item.read_more_url!)}
+                      >
+                        Read more
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
           </section>
         )}
 
@@ -1194,7 +1633,7 @@ export default function App() {
         {tab === "settings" && settings && (
           <section className="panel" key="settings">
             <h2 className="section-head">Settings</h2>
-            <p className="section-sub">Memory, Java, and data folder.</p>
+            <p className="section-sub">Memory, Java, resolution, and data folder.</p>
 
             <div className="settings-grid">
               <label>
@@ -1291,7 +1730,9 @@ export default function App() {
                     {logLoading ? "Loading…" : "Refresh"}
                   </button>
                 </div>
-                {!selected && <p className="hint">Select an instance on Play to view logs.</p>}
+                {!selected && (
+                  <p className="hint">Select an instance to view logs.</p>
+                )}
                 {selected && launchLog && (
                   <pre className="log-view">
                     {launchLog.stderr && (
@@ -1353,7 +1794,7 @@ export default function App() {
                   }
                 }}
               >
-                Delete
+                Confirm
               </button>
             </div>
           </div>
@@ -1368,5 +1809,9 @@ function DataDir() {
   useEffect(() => {
     invoke<string>("get_data_dir").then(setDir);
   }, []);
-  return <p className="hint" style={{ fontSize: "0.75rem", wordBreak: "break-all" }}>Data: {dir}</p>;
+  return (
+    <p className="hint" style={{ fontSize: "0.75rem", wordBreak: "break-all" }}>
+      Data: {dir}
+    </p>
+  );
 }
