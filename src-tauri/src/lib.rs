@@ -72,9 +72,9 @@ async fn install_forge(
 }
 
 #[tauri::command]
-async fn launch_instance(version_id: String) -> Result<String, String> {
+async fn launch_instance(app: tauri::AppHandle, version_id: String) -> Result<String, String> {
     // version_id arg is the instance id (folder name)
-    launch::launch_game(&version_id).await
+    launch::launch_game(app, &version_id).await
 }
 
 #[tauri::command]

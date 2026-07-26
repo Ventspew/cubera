@@ -179,6 +179,7 @@ fn read_tail(path: &Path, max_bytes: usize) -> String {
 }
 
 #[derive(serde::Serialize)]
+#[derive(Default)]
 pub struct LaunchLog {
     pub stdout: String,
     pub stderr: String,

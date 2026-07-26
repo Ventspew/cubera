@@ -177,7 +177,13 @@ pub async fn fetch_version_json(url: &str) -> Result<serde_json::Value, String> 
         .map_err(|e| e.to_string())
 }
 
+/// Evaluate Mojang-style rules. Feature keys must match `features` exactly;
+/// missing feature values are treated as `false` (so `--demo` stays off unless enabled).
 pub fn rule_allows(rules: &Option<Vec<Rule>>) -> bool {
+    rule_allows_with(rules, &HashMap::new())
+}
+
+pub fn rule_allows_with(rules: &Option<Vec<Rule>>, features: &HashMap<String, bool>) -> bool {
     let Some(rules) = rules else {
         return true;
     };
@@ -210,7 +216,14 @@ pub fn rule_allows(rules: &Option<Vec<Rule>>) -> bool {
             }
         };
 
-        if os_ok {
+        let features_ok = match &rule.features {
+            None => true,
+            Some(needed) => needed.iter().all(|(key, want)| {
+                features.get(key).copied().unwrap_or(false) == *want
+            }),
+        };
+
+        if os_ok && features_ok {
             allowed = rule.action == "allow";
         }
     }

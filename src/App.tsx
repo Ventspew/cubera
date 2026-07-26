@@ -586,7 +586,15 @@ export default function App() {
       showStatus(msg);
       await refreshInstances();
     } catch (e) {
+      setSelectedRunning(false);
       showStatus(String(e), true);
+      try {
+        const log = await invoke<LaunchLog>("get_launch_log", { instanceId: selected });
+        setLaunchLog(log);
+        setTab("settings");
+      } catch {
+        /* ignore log load errors */
+      }
     } finally {
       setBusy(false);
     }
