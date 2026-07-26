@@ -1,6 +1,6 @@
 [package]
 name = "cubera"
-version = "0.2.3"
+version = "0.2.4"
 description = "Cubera — a modern Minecraft launcher for macOS"
 authors = ["Cubera"]
 edition = "2021"

@@ -5,7 +5,7 @@ use std::path::Path;
 const PACK_NAME: &str = "Cubera-Branding";
 const PACK_FILE: &str = "Cubera-Branding.zip";
 /// Bump when textures/splashes change so existing installs refresh.
-const PACK_REVISION: &str = "3";
+const PACK_REVISION: &str = "4";
 
 pub fn install_ingame_branding(game_dir: &Path) -> Result<(), String> {
     let packs_dir = game_dir.join("resourcepacks");
@@ -33,7 +33,7 @@ fn write_branding_pack(zip_path: &Path) -> Result<(), String> {
   "pack": {
     "pack_format": 34,
     "supported_formats": { "min_inclusive": 15, "max_inclusive": 64 },
-    "description": "§6Cubera §8· §7title subtitle & splashes"
+    "description": "§6Cubera §8· §7title logo & splashes"
   }
 }
 "#;
