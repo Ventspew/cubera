@@ -152,9 +152,7 @@ pub async fn install_vanilla(
         }
     }
 
-    // Default instance
-    let instance = crate::paths::instances_dir().join(version_id);
-    fs::create_dir_all(instance.join("mods")).map_err(|e| e.to_string())?;
+    let _ = crate::instances::ensure_instance_with_version(version_id, version_id);
 
     emit(&app, "done", 1, 1, "Install complete");
     Ok(version_id.to_string())

@@ -266,7 +266,11 @@ async fn download_one_lib(lib: &Value) -> Result<(), String> {
     let rel = crate::manifest::maven_path(name);
     let dest = libraries_dir().join(&rel);
     let url = format!("{base}{rel}");
-    let _ = download_file(&url, &dest, None).await;
+    if download_file(&url, &dest, None).await.is_err() {
+        // NeoForge / mirrored artifacts
+        let neo = format!("https://maven.neoforged.net/releases/{rel}");
+        let _ = download_file(&neo, &dest, None).await;
+    }
     Ok(())
 }
 

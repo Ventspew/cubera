@@ -43,7 +43,7 @@ fn undash(uuid: &str) -> String {
 pub async fn get_player_avatar_data_url(uuid: &str) -> Result<String, String> {
     let id = undash(uuid);
     if id.len() != 32 {
-        return Err("Ongeldige UUID".into());
+        return Err("Invalid UUID".into());
     }
 
     fs::create_dir_all(skins_dir()).map_err(|e| e.to_string())?;
@@ -90,7 +90,7 @@ async fn download_avatar_bytes(undashed: &str) -> Result<Vec<u8>, String> {
         }
     }
 
-    Err("Skin kon niet worden opgehaald".into())
+    Err("Could not fetch skin".into())
 }
 
 async fn fetch_png(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
@@ -104,7 +104,7 @@ async fn fetch_png(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, Strin
     }
     let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
     if bytes.len() < 32 || &bytes[0..4] != b"\x89PNG" {
-        return Err("Geen PNG ontvangen".into());
+        return Err("No PNG received".into());
     }
     Ok(bytes.to_vec())
 }
@@ -127,18 +127,18 @@ async fn fetch_mojang_skin_url(client: &reqwest::Client, undashed: &str) -> Resu
         .unwrap_or_default()
         .into_iter()
         .find(|p| p.name == "textures")
-        .ok_or_else(|| "Geen textures in profiel".to_string())?;
+        .ok_or_else(|| "No textures in profile".to_string())?;
 
     let decoded = B64
         .decode(textures.value.trim())
-        .map_err(|e| format!("Textures decode mislukt: {e}"))?;
+        .map_err(|e| format!("Textures decode failed: {e}"))?;
     let payload: TexturePayload =
         serde_json::from_slice(&decoded).map_err(|e| e.to_string())?;
     let skin_url = payload
         .textures
         .skin
         .map(|s| s.url)
-        .ok_or_else(|| "Geen skin URL".to_string())?;
+        .ok_or_else(|| "No skin URL".to_string())?;
 
     // textures.minecraft.net is often http — upgrade
     Ok(skin_url.replacen("http://", "https://", 1))

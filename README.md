@@ -1,43 +1,43 @@
 # Cubera
 
-Een moderne Minecraft-launcher voor macOS — vanilla, Fabric, Forge en Modrinth.
+A modern Minecraft launcher for macOS — built to compete with Prism, MultiMC, and the Modrinth App.
 
-Gebouwd met **Tauri 2 + React + TypeScript**.
+Built with **Tauri 2 + React + TypeScript**.
 
-## Installeren (macOS)
+## Install (macOS)
 
-1. Download de nieuwste **`.dmg`** van [Releases](https://github.com/Ventspew/cubera/releases).
-2. Open de disk image.
-3. Sleep **Cubera** naar **Applications**.
-4. Als macOS de app weigert / naar de Prullenmand wil:
+1. Download the latest **`.dmg`** from [Releases](https://github.com/Ventspew/cubera/releases).
+2. Open the disk image.
+3. Drag **Cubera** to **Applications**.
+4. If macOS blocks the app or moves it to Trash:
 
 ```bash
 xattr -cr /Applications/Cubera.app
 open /Applications/Cubera.app
 ```
 
-Of rechtermuisklik → **Open**.
+Or right-click → **Open**.
 
-Java 17+ is nodig om te spelen:
+Java 17+ is required to play:
 
 ```bash
 brew install --cask temurin
 ```
 
-## Ontwikkelen
+## Development
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-## Bouwen
+## Build
 
 ```bash
 npm run tauri build
 ```
 
-De installer verschijnt in:
+The installer appears in:
 
 ```
 src-tauri/target/release/bundle/dmg/
@@ -45,12 +45,36 @@ src-tauri/target/release/bundle/dmg/
 
 ## Features
 
-- Microsoft-login (device code) + offline accounts
-- Vanilla, Fabric & Forge installeren
-- Modrinth mods zoeken & installeren
-- Geheugen, resolutie, fullscreen en JVM-args
-- Data in `~/Library/Application Support/Cubera/`
+### Instances (first-class)
+- Named instances with notes, last played, play count
+- Per-instance memory & JVM args (override globals)
+- Duplicate instances (shared version profile)
+- Launch / kill process tracking
+- Quick folders: mods, saves, screenshots
 
-## Licentie
+### Install
+- Vanilla, Fabric, Quilt, Forge, **NeoForge**
+- Release / snapshot / all version filters
+- **Modrinth `.mrpack` modpacks** (loader + mods + overrides)
+
+### Content
+- Modrinth mods, modpacks, resource packs, and shaders
+- Filtered by instance game version & loader
+
+### Java
+- **Managed Mojang Java** download (21 / 17 / 25) — auto-used on launch
+
+### Account & launch
+- Microsoft device-code login with **token refresh**
+- Offline accounts with correct Mojang offline UUIDs
+- In-game Cubera branding (resource pack + splashes)
+- Minecraft news feed
+- Launch log viewer
+
+### Data
+
+Stored in `~/Library/Application Support/Cubera/`.
+
+## License
 
 MIT

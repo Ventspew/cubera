@@ -38,8 +38,42 @@ pub struct ModrinthFile {
     pub size: u64,
 }
 
-pub async fn search_mods(query: &str, loader: Option<String>, game_version: Option<String>) -> Result<ModrinthSearch, String> {
-    let mut facets: Vec<Vec<String>> = vec![vec!["project_type:mod".into()]];
+pub async fn search_mods(
+    query: &str,
+    loader: Option<String>,
+    game_version: Option<String>,
+) -> Result<ModrinthSearch, String> {
+    search_projects(query, "mod", loader, game_version).await
+}
+
+pub async fn search_resourcepacks(
+    query: &str,
+    game_version: Option<String>,
+) -> Result<ModrinthSearch, String> {
+    search_projects(query, "resourcepack", None, game_version).await
+}
+
+pub async fn search_shaders(
+    query: &str,
+    game_version: Option<String>,
+) -> Result<ModrinthSearch, String> {
+    search_projects(query, "shader", None, game_version).await
+}
+
+pub async fn search_modpacks(
+    query: &str,
+    game_version: Option<String>,
+) -> Result<ModrinthSearch, String> {
+    search_projects(query, "modpack", None, game_version).await
+}
+
+async fn search_projects(
+    query: &str,
+    project_type: &str,
+    loader: Option<String>,
+    game_version: Option<String>,
+) -> Result<ModrinthSearch, String> {
+    let mut facets: Vec<Vec<String>> = vec![vec![format!("project_type:{project_type}")]];
     if let Some(l) = loader {
         if !l.is_empty() {
             facets.push(vec![format!("categories:{l}")]);
@@ -103,9 +137,22 @@ pub async fn get_project_versions(
 }
 
 pub async fn install_mod(instance_id: &str, file_url: &str, filename: &str) -> Result<String, String> {
-    let mods_dir = crate::paths::instances_dir().join(instance_id).join("mods");
-    std::fs::create_dir_all(&mods_dir).map_err(|e| e.to_string())?;
-    let dest = mods_dir.join(filename);
+    install_content(instance_id, "mods", file_url, filename).await
+}
+
+pub async fn install_content(
+    instance_id: &str,
+    folder: &str,
+    file_url: &str,
+    filename: &str,
+) -> Result<String, String> {
+    let allowed = ["mods", "resourcepacks", "shaderpacks"];
+    if !allowed.contains(&folder) {
+        return Err("Invalid content folder".into());
+    }
+    let dir = crate::paths::instances_dir().join(instance_id).join(folder);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dest = dir.join(filename);
     crate::download::download_file(file_url, &dest, None).await?;
     Ok(dest.display().to_string())
 }
