@@ -53,12 +53,16 @@ src-tauri/target/release/bundle/dmg/
 - Quick folders: mods, saves, screenshots
 
 ### Install
-- Vanilla, Fabric, Quilt, Forge
+- Vanilla, Fabric, Quilt, Forge, **NeoForge**
 - Release / snapshot / all version filters
+- **Modrinth `.mrpack` modpacks** (loader + mods + overrides)
 
 ### Content
-- Modrinth mods, resource packs, and shaders
+- Modrinth mods, modpacks, resource packs, and shaders
 - Filtered by instance game version & loader
+
+### Java
+- **Managed Mojang Java** download (21 / 17 / 25) — auto-used on launch
 
 ### Account & launch
 - Microsoft device-code login with **token refresh**

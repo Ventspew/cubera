@@ -10,8 +10,10 @@ use zip::ZipArchive;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MrPackIndex {
+    #[allow(dead_code)]
     format_version: u32,
     game: String,
+    #[allow(dead_code)]
     version_id: Option<String>,
     name: String,
     summary: Option<String>,

@@ -123,21 +123,6 @@ pub fn list_managed_java() -> Vec<ManagedJavaInfo> {
         .collect()
 }
 
-pub async fn ensure_java_component(
-    app: AppHandle,
-    component: &str,
-) -> Result<ManagedJavaInfo, String> {
-    if let Some(bin) = managed_java_bin(component) {
-        return Ok(ManagedJavaInfo {
-            component: component.into(),
-            version: "installed".into(),
-            path: bin.display().to_string(),
-            installed: true,
-        });
-    }
-    install_java_component(app, component).await
-}
-
 pub async fn install_java_component(
     app: AppHandle,
     component: &str,
