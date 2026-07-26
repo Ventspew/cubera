@@ -218,7 +218,7 @@ pub async fn launch_game(app: AppHandle, instance_id: &str) -> Result<String, St
         format!("-Xms{}M", (memory / 4).max(512)),
         format!("-Djava.library.path={}", natives.display()),
         "-Dminecraft.launcher.brand=Cubera".into(),
-        "-Dminecraft.launcher.version=0.2.2".into(),
+        "-Dminecraft.launcher.version=0.2.3".into(),
     ];
 
     let extra_jvm = meta
@@ -590,7 +590,7 @@ fn replace_tokens(s: &str, ctx: &ArgContext<'_>) -> String {
         .replace("${version_type}", "Cubera")
         .replace("${natives_directory}", &ctx.natives.display().to_string())
         .replace("${launcher_name}", "Cubera")
-        .replace("${launcher_version}", "0.2.2")
+        .replace("${launcher_version}", "0.2.3")
         .replace("${classpath}", ctx.classpath)
         .replace(
             "${library_directory}",
