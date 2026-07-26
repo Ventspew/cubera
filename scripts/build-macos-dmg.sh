@@ -26,7 +26,7 @@ fi
 
 STAGE=/tmp/Cubera-dmg-stage
 OUT_DIR="$ROOT/dist-installer"
-DMG="$OUT_DIR/Cubera_0.1.0_aarch64.dmg"
+DMG="$OUT_DIR/Cubera_0.2.0_aarch64.dmg"
 rm -rf "$STAGE" "$OUT_DIR"
 mkdir -p "$STAGE" "$OUT_DIR"
 cp -R "$APP" "$STAGE/"

@@ -1,0 +1,83 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/publish (e.g. v0.2.0)"
+        required: true
+        default: "v0.2.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-dmg:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@2
+
+      - name: Install macOS build dependencies
+        run: |
+          rustup target add aarch64-apple-darwin
+          brew install create-dmg || true
+
+      - name: Build Cubera .app + DMG
+        run: bash scripts/build-macos-dmg.sh
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "name=Cubera ${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          draft: false
+          make_latest: true
+          generate_release_notes: true
+          files: |
+            dist-installer/*.dmg
+          body: |
+            Cubera ${{ steps.meta.outputs.tag }} for Apple Silicon (macOS 12+).
+
+            ## What's new
+            - First-class instances (notes, memory/JVM overrides, duplicate, last played)
+            - NeoForge support
+            - Modrinth `.mrpack` modpack install
+            - Managed Mojang Java download
+            - Quilt + Fabric/Forge/Vanilla
+            - Sharper in-game Cubera branding resource pack
+            - English UI throughout
+
+            ## Install
+            1. Download `Cubera_0.2.0_aarch64.dmg`
+            2. Open the DMG and drag **Cubera** into Applications
+            3. On first open: right-click → Open (unsigned build)
