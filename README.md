@@ -1,6 +1,6 @@
 # Cubera
 
-A modern Minecraft launcher for macOS — vanilla, Fabric, Forge, and Modrinth.
+A modern Minecraft launcher for macOS — built to compete with Prism, MultiMC, and the Modrinth App.
 
 Built with **Tauri 2 + React + TypeScript**.
 
@@ -45,12 +45,31 @@ src-tauri/target/release/bundle/dmg/
 
 ## Features
 
-- Microsoft sign-in (device code) + offline accounts
-- Install vanilla, Fabric & Forge
-- Search & install Modrinth mods
-- Memory, resolution, fullscreen, and JVM args
-- In-game Cubera branding via resource pack
-- Data stored in `~/Library/Application Support/Cubera/`
+### Instances (first-class)
+- Named instances with notes, last played, play count
+- Per-instance memory & JVM args (override globals)
+- Duplicate instances (shared version profile)
+- Launch / kill process tracking
+- Quick folders: mods, saves, screenshots
+
+### Install
+- Vanilla, Fabric, Quilt, Forge
+- Release / snapshot / all version filters
+
+### Content
+- Modrinth mods, resource packs, and shaders
+- Filtered by instance game version & loader
+
+### Account & launch
+- Microsoft device-code login with **token refresh**
+- Offline accounts with correct Mojang offline UUIDs
+- In-game Cubera branding (resource pack + splashes)
+- Minecraft news feed
+- Launch log viewer
+
+### Data
+
+Stored in `~/Library/Application Support/Cubera/`.
 
 ## License
 
