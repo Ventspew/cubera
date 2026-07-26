@@ -68,16 +68,15 @@ jobs:
           body: |
             Cubera ${{ steps.meta.outputs.tag }} for Apple Silicon (macOS 12+).
 
-            ## What's new
-            - First-class instances (notes, memory/JVM overrides, duplicate, last played)
-            - NeoForge support
-            - Modrinth `.mrpack` modpack install
-            - Managed Mojang Java download
-            - Quilt + Fabric/Forge/Vanilla
-            - Sharper in-game Cubera branding resource pack
-            - English UI throughout
-
             ## Install
-            1. Download `Cubera_0.2.0_aarch64.dmg`
-            2. Open the DMG and drag **Cubera** into Applications
-            3. On first open: right-click → Open (unsigned build)
+            1. Download the `.dmg` and open it
+            2. Drag **Cubera** into **Applications**
+            3. If macOS says the app is **damaged**, run **Fix & Open Cubera** from the DMG (or the Terminal command below)
+
+            ### Gatekeeper fix (Terminal)
+            ```bash
+            xattr -cr /Applications/Cubera.app
+            open /Applications/Cubera.app
+            ```
+
+            Cubera is currently ad-hoc signed (no Apple Developer ID notarization yet).
