@@ -72,7 +72,7 @@ struct McProfile {
 }
 
 pub async fn start_device_login() -> Result<DeviceCodeResponse, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
         .form(&[("client_id", MSA_CLIENT_ID), ("scope", MSA_SCOPE)])
@@ -90,7 +90,7 @@ pub async fn start_device_login() -> Result<DeviceCodeResponse, String> {
 }
 
 pub async fn poll_device_login(device_code: String, interval: u64) -> Result<Account, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let interval = interval.max(1);
     let deadline = std::time::Instant::now() + Duration::from_secs(15 * 60);
 
@@ -143,7 +143,7 @@ async fn finish_xbox_minecraft_login(
     msa_token: String,
     refresh_token: Option<String>,
 ) -> Result<Account, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let xbl_resp = client
         .post("https://user.auth.xboxlive.com/user/authenticate")

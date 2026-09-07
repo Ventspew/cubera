@@ -19,14 +19,8 @@ pub struct FabricLoaderVersion {
 
 pub async fn list_fabric_loaders(game_version: &str) -> Result<Vec<FabricLoaderVersion>, String> {
     let url = format!("{FABRIC_META}/versions/loader/{game_version}");
-    let client = reqwest::Client::new();
-    let loaders: Vec<serde_json::Value> = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
+    let loaders: Vec<serde_json::Value> = crate::http::get_response(&url)
+        .await?
         .json()
         .await
         .map_err(|e| e.to_string())?;
@@ -60,14 +54,8 @@ pub async fn install_fabric(
 
     let profile_id = format!("fabric-loader-{loader_version}-{game_version}");
     let url = format!("{FABRIC_META}/versions/loader/{game_version}/{loader_version}/profile/json");
-    let client = reqwest::Client::new();
-    let profile: serde_json::Value = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
+    let profile: serde_json::Value = crate::http::get_response(&url)
+        .await?
         .json()
         .await
         .map_err(|e| e.to_string())?;
@@ -111,14 +99,8 @@ pub struct ForgeVersionEntry {
 
 pub async fn list_forge_versions(mc_filter: Option<String>) -> Result<Vec<ForgeVersionEntry>, String> {
     let url = "https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json";
-    let client = reqwest::Client::new();
-    let map: serde_json::Map<String, serde_json::Value> = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
+    let map: serde_json::Map<String, serde_json::Value> = crate::http::get_response(url)
+        .await?
         .json()
         .await
         .map_err(|e| e.to_string())?;

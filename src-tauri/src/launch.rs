@@ -1,10 +1,15 @@
 use crate::download::{natives_dir_for, resolve_version_chain};
-use crate::manifest::{rule_allows, Argument, ArgumentValue, Library, VersionJson};
+use crate::manifest::{
+    rule_allows, rule_allows_with_features, Argument, ArgumentValue, Library, VersionJson,
+};
 use crate::paths::{assets_dir, libraries_dir, load_settings, versions_dir, Account};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 pub fn find_java(preferred: Option<&str>) -> Result<PathBuf, String> {
     if let Some(p) = preferred {
@@ -15,32 +20,29 @@ pub fn find_java(preferred: Option<&str>) -> Result<PathBuf, String> {
     }
 
     let candidates = [
-        "/usr/libexec/java_home",
         "/opt/homebrew/opt/openjdk/bin/java",
         "/opt/homebrew/opt/openjdk@21/bin/java",
         "/opt/homebrew/opt/openjdk@17/bin/java",
         "/usr/bin/java",
     ];
 
-    // macOS java_home
-    if let Ok(output) = Command::new("/usr/libexec/java_home").arg("-v").arg("21").output() {
-        if output.status.success() {
-            let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let bin = PathBuf::from(&home).join("bin/java");
-            if bin.exists() {
-                return Ok(bin);
+    // Prefer a modern JDK; Minecraft 26.x wants ~25+.
+    for version in ["25", "26", "21", "17"] {
+        if let Ok(output) = Command::new("/usr/libexec/java_home")
+            .arg("-v")
+            .arg(version)
+            .output()
+        {
+            if output.status.success() {
+                let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let bin = PathBuf::from(&home).join("bin/java");
+                if bin.exists() {
+                    return Ok(bin);
+                }
             }
         }
     }
-    if let Ok(output) = Command::new("/usr/libexec/java_home").arg("-v").arg("17").output() {
-        if output.status.success() {
-            let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let bin = PathBuf::from(&home).join("bin/java");
-            if bin.exists() {
-                return Ok(bin);
-            }
-        }
-    }
+
     if let Ok(output) = Command::new("/usr/libexec/java_home").output() {
         if output.status.success() {
             let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -53,7 +55,7 @@ pub fn find_java(preferred: Option<&str>) -> Result<PathBuf, String> {
 
     for c in candidates {
         let p = PathBuf::from(c);
-        if p.exists() && c.ends_with("java") {
+        if p.exists() {
             return Ok(p);
         }
     }
@@ -62,7 +64,7 @@ pub fn find_java(preferred: Option<&str>) -> Result<PathBuf, String> {
         return Ok(path);
     }
 
-    Err("Java not found. Install Temurin 21 via Homebrew: brew install --cask temurin".into())
+    Err("Java niet gevonden. Installeer Temurin 21+ via Homebrew: brew install --cask temurin".into())
 }
 
 fn which(bin: &str) -> Result<PathBuf, String> {
@@ -81,7 +83,7 @@ fn which(bin: &str) -> Result<PathBuf, String> {
 pub async fn launch_game(version_id: &str) -> Result<String, String> {
     let settings = load_settings();
     let account = active_account(&settings.accounts, settings.active_account.as_deref())
-        .ok_or_else(|| "No account selected. Log in first.".to_string())?;
+        .ok_or_else(|| "Geen account geselecteerd. Log eerst in.".to_string())?;
 
     let java = find_java(settings.java_path.as_deref())?;
     let chain = resolve_version_chain(version_id)?;
@@ -90,6 +92,7 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
     let game_dir = crate::paths::instances_dir().join(version_id);
     fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
     fs::create_dir_all(game_dir.join("mods")).map_err(|e| e.to_string())?;
+    let _ = crate::branding::prepare_instance_branding(&game_dir);
 
     let natives = natives_dir_for(version_id);
     fs::create_dir_all(&natives).map_err(|e| e.to_string())?;
@@ -103,13 +106,45 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
         .or(merged.assets.clone())
         .unwrap_or_else(|| "legacy".into());
 
+    let width = settings.width.max(640);
+    let height = settings.height.max(480);
+
+    // Custom window size is always provided by Cubera settings.
+    let mut features = HashMap::new();
+    features.insert("has_custom_resolution".into(), !settings.fullscreen);
+    features.insert("is_demo_user".into(), false);
+    features.insert("has_quick_plays_support".into(), false);
+    features.insert("is_quick_play_singleplayer".into(), false);
+    features.insert("is_quick_play_multiplayer".into(), false);
+    features.insert("is_quick_play_realms".into(), false);
+
+    let has_modern_jvm = merged
+        .arguments
+        .as_ref()
+        .and_then(|a| a.jvm.as_ref())
+        .is_some();
+
     let mut jvm_args = vec![
         format!("-Xmx{}M", settings.memory_mb),
         format!("-Xms{}M", (settings.memory_mb / 4).max(512)),
-        format!("-Djava.library.path={}", natives.display()),
         "-Dminecraft.launcher.brand=Cubera".into(),
         "-Dminecraft.launcher.version=0.1.0".into(),
     ];
+
+    #[cfg(target_os = "macos")]
+    {
+        jvm_args.extend(crate::branding::macos_dock_jvm_args());
+    }
+
+    // Legacy versions need an explicit library path. Modern manifests set
+    // `-Djava.library.path=${natives_directory}/java` themselves — do not
+    // prepend an older path or Java will keep the first -D value.
+    if !has_modern_jvm {
+        jvm_args.push(format!(
+            "-Djava.library.path={}",
+            natives.join("java").display()
+        ));
+    }
 
     if !settings.jvm_args.trim().is_empty() {
         jvm_args.extend(
@@ -121,13 +156,23 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
     }
 
     if let Some(args) = merged.arguments.as_ref().and_then(|a| a.jvm.as_ref()) {
-        jvm_args.extend(expand_args(args, &classpath, &natives, &account, version_id, &game_dir, &asset_index));
+        jvm_args.extend(expand_args(
+            args,
+            &classpath,
+            &natives,
+            &account,
+            version_id,
+            &game_dir,
+            &asset_index,
+            &features,
+            width,
+            height,
+        ));
     } else {
         jvm_args.push("-cp".into());
         jvm_args.push(classpath.clone());
     }
 
-    // Ensure -cp is present for modern args that use ${classpath}
     if !jvm_args.iter().any(|a| a == "-cp" || a == "-classpath") {
         jvm_args.push("-cp".into());
         jvm_args.push(classpath.clone());
@@ -145,6 +190,9 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
             version_id,
             &game_dir,
             &asset_index,
+            &features,
+            width,
+            height,
         ));
     } else if let Some(legacy) = &merged.minecraft_arguments {
         game_args.extend(legacy.split_whitespace().map(|s| {
@@ -156,6 +204,8 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
                 version_id,
                 &game_dir,
                 &asset_index,
+                width,
+                height,
             )
         }));
     } else {
@@ -185,7 +235,6 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
         ]);
     }
 
-    // Window / fullscreen
     if settings.fullscreen {
         if !game_args.iter().any(|a| a == "--fullscreen") {
             game_args.push("--fullscreen".into());
@@ -194,16 +243,16 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
         game_args.retain(|a| a != "--fullscreen");
         if !game_args.iter().any(|a| a == "--width") {
             game_args.push("--width".into());
-            game_args.push(settings.width.max(640).to_string());
+            game_args.push(width.to_string());
             game_args.push("--height".into());
-            game_args.push(settings.height.max(480).to_string());
+            game_args.push(height.to_string());
         }
     }
 
-    // Log file
     let log_path = game_dir.join("cubera-launch.log");
+    let err_path = game_dir.join("cubera-launch.err.log");
     let log_file = fs::File::create(&log_path).ok();
-    let err_file = fs::File::create(game_dir.join("cubera-launch.err.log")).ok();
+    let err_file = fs::File::create(&err_path).ok();
 
     let mut cmd = Command::new(&java);
     cmd.args(&jvm_args)
@@ -222,8 +271,38 @@ pub async fn launch_game(version_id: &str) -> Result<String, String> {
         cmd.stderr(Stdio::null());
     }
 
-    cmd.spawn().map_err(|e| format!("Failed to launch: {e}"))?;
-    Ok(format!("Launched {version_id} as {}", account.name))
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Kon Minecraft niet starten: {e}"))?;
+
+    // Catch immediate crashes so the UI doesn't just say "Launched".
+    thread::sleep(Duration::from_millis(1500));
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            let err_tail = fs::read_to_string(&err_path).unwrap_or_default();
+            let out_tail = fs::read_to_string(&log_path).unwrap_or_default();
+            let detail = [err_tail.trim(), out_tail.trim()]
+                .into_iter()
+                .find(|s| !s.is_empty())
+                .unwrap_or("geen loguitvoer")
+                .chars()
+                .rev()
+                .take(800)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>();
+            return Err(format!(
+                "Minecraft stopte meteen (exit {status}).\n{detail}"
+            ));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            return Err(format!("Kon processtatus niet checken: {e}"));
+        }
+    }
+
+    Ok(format!("Gestart: {version_id} als {}", account.name))
 }
 
 fn active_account<'a>(accounts: &'a [Account], active: Option<&str>) -> Option<&'a Account> {
@@ -236,12 +315,10 @@ fn active_account<'a>(accounts: &'a [Account], active: Option<&str>) -> Option<&
 }
 
 fn merge_versions(chain: &[Value]) -> Result<VersionJson, String> {
-    // chain[0] is child (forge/fabric), last is vanilla base
     let mut merged = Value::Object(serde_json::Map::new());
     for json in chain.iter().rev() {
         deep_merge(&mut merged, json);
     }
-    // Libraries should be concatenated child-first then parent
     let mut libs = Vec::new();
     for json in chain {
         if let Some(arr) = json.get("libraries").and_then(|v| v.as_array()) {
@@ -276,7 +353,6 @@ fn build_classpath(version_id: &str, libraries: &[Library]) -> Result<String, St
             continue;
         }
         if lib.natives.is_some() {
-            // natives jars go to natives dir, not always classpath — skip classifier-only
             if lib
                 .downloads
                 .as_ref()
@@ -303,19 +379,15 @@ fn build_classpath(version_id: &str, libraries: &[Library]) -> Result<String, St
     let client_jar = versions_dir()
         .join(version_id)
         .join(format!("{version_id}.jar"));
-    // For inherited versions, client jar is on the vanilla id
     if client_jar.exists() {
         entries.push(client_jar.display().to_string());
-    } else {
-        // walk inherits
-        if let Ok(chain) = resolve_version_chain(version_id) {
-            for json in chain.iter().rev() {
-                if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
-                    let jar = versions_dir().join(id).join(format!("{id}.jar"));
-                    if jar.exists() {
-                        entries.push(jar.display().to_string());
-                        break;
-                    }
+    } else if let Ok(chain) = resolve_version_chain(version_id) {
+        for json in chain.iter().rev() {
+            if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
+                let jar = versions_dir().join(id).join(format!("{id}.jar"));
+                if jar.exists() {
+                    entries.push(jar.display().to_string());
+                    break;
                 }
             }
         }
@@ -325,38 +397,85 @@ fn build_classpath(version_id: &str, libraries: &[Library]) -> Result<String, St
 }
 
 fn extract_natives(libraries: &[Library], natives_dir: &Path) -> Result<(), String> {
+    let java_dir = natives_dir.join("java");
+    fs::create_dir_all(&java_dir).map_err(|e| e.to_string())?;
+    fs::create_dir_all(natives_dir.join("jna")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(natives_dir.join("lwjgl")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(natives_dir.join("netty")).map_err(|e| e.to_string())?;
+
     for lib in libraries {
         if !rule_allows(&lib.rules) {
             continue;
         }
-        let Some(downloads) = &lib.downloads else {
-            continue;
-        };
-        let Some(classifiers) = &downloads.classifiers else {
-            continue;
-        };
-        for (key, artifact) in classifiers {
-            let is_mac = key.contains("natives-osx")
-                || key.contains("natives-macos")
-                || key.contains("natives-macos-arm64")
-                || key.contains("natives-osx-arm64");
-            if !is_mac {
-                continue;
+
+        // Legacy classifier natives
+        if let Some(downloads) = &lib.downloads {
+            if let Some(classifiers) = &downloads.classifiers {
+                for (key, artifact) in classifiers {
+                    if !classifier_matches_macos(key) {
+                        continue;
+                    }
+                    let jar = libraries_dir().join(&artifact.path);
+                    if jar.exists() {
+                        extract_native_binaries(&jar, &java_dir)?;
+                    }
+                }
             }
-            if cfg!(target_arch = "aarch64") && key.contains("x86") {
-                continue;
+        }
+
+        // Modern natives as separate artifacts: group:artifact:ver:natives-macos-arm64
+        if lib.name.contains(":natives-") && native_classifier_matches_macos(&lib.name) {
+            let jar = if let Some(artifact) = lib
+                .downloads
+                .as_ref()
+                .and_then(|d| d.artifact.as_ref())
+            {
+                libraries_dir().join(&artifact.path)
+            } else {
+                libraries_dir().join(crate::manifest::maven_path(&lib.name))
+            };
+            if jar.exists() {
+                extract_native_binaries(&jar, &java_dir)?;
             }
-            let jar = libraries_dir().join(&artifact.path);
-            if !jar.exists() {
-                continue;
+        }
+
+        // Some jars (java-objc-bridge) ship dylibs inside the main artifact.
+        if lib.name.contains("java-objc-bridge") {
+            if let Some(artifact) = lib
+                .downloads
+                .as_ref()
+                .and_then(|d| d.artifact.as_ref())
+            {
+                let jar = libraries_dir().join(&artifact.path);
+                if jar.exists() {
+                    extract_native_binaries(&jar, &java_dir)?;
+                }
             }
-            extract_zip(&jar, natives_dir)?;
         }
     }
     Ok(())
 }
 
-fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
+fn classifier_matches_macos(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    if !(key.contains("natives-osx") || key.contains("natives-macos")) {
+        return false;
+    }
+    if cfg!(target_arch = "aarch64") {
+        // Intel `natives-macos` and arm `natives-macos-arm64` are separate artifacts.
+        key.contains("arm64")
+    } else {
+        !key.contains("arm64")
+    }
+}
+
+fn native_classifier_matches_macos(name: &str) -> bool {
+    let parts: Vec<&str> = name.split(':').collect();
+    let classifier = parts.get(3).copied().unwrap_or("");
+    classifier_matches_macos(classifier) || classifier_matches_macos(name)
+}
+
+fn extract_native_binaries(zip_path: &Path, dest: &Path) -> Result<(), String> {
     let file = fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     for i in 0..archive.len() {
@@ -365,8 +484,30 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
         if name.ends_with('/') || name.contains("META-INF") {
             continue;
         }
-        let out_path = dest.join(Path::new(&name).file_name().unwrap_or_default());
-        let mut outfile = fs::File::create(out_path).map_err(|e| e.to_string())?;
+        let lower = name.to_ascii_lowercase();
+        let is_native = lower.ends_with(".dylib")
+            || lower.ends_with(".jnilib")
+            || lower.ends_with(".so")
+            || lower.ends_with(".dll");
+        if !is_native {
+            continue;
+        }
+        // Skip wrong-arch nested LWJGL paths when possible.
+        if cfg!(target_arch = "aarch64")
+            && (lower.contains("/x64/") || lower.contains("/x86/"))
+            && !lower.contains("/arm64/")
+        {
+            continue;
+        }
+        if cfg!(target_arch = "x86_64") && lower.contains("/arm64/") {
+            continue;
+        }
+
+        let file_name = Path::new(&name)
+            .file_name()
+            .ok_or_else(|| format!("Ongeldige native entry: {name}"))?;
+        let out_path = dest.join(file_name);
+        let mut outfile = fs::File::create(&out_path).map_err(|e| e.to_string())?;
         std::io::copy(&mut entry, &mut outfile).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -380,24 +521,28 @@ fn expand_args(
     version_id: &str,
     game_dir: &Path,
     asset_index: &str,
+    features: &HashMap<String, bool>,
+    width: u32,
+    height: u32,
 ) -> Vec<String> {
     let mut out = Vec::new();
     for arg in args {
         match arg {
             Argument::String(s) => out.push(replace_tokens(
-                s, classpath, natives, account, version_id, game_dir, asset_index,
+                s, classpath, natives, account, version_id, game_dir, asset_index, width, height,
             )),
             Argument::Object { rules, value } => {
-                if crate::manifest::rule_allows(rules) {
+                if rule_allows_with_features(rules, features) {
                     match value {
                         ArgumentValue::Single(s) => out.push(replace_tokens(
                             s, classpath, natives, account, version_id, game_dir, asset_index,
+                            width, height,
                         )),
                         ArgumentValue::Multiple(list) => {
                             for s in list {
                                 out.push(replace_tokens(
                                     s, classpath, natives, account, version_id, game_dir,
-                                    asset_index,
+                                    asset_index, width, height,
                                 ));
                             }
                         }
@@ -417,6 +562,8 @@ fn replace_tokens(
     version_id: &str,
     game_dir: &Path,
     asset_index: &str,
+    width: u32,
+    height: u32,
 ) -> String {
     s.replace("${auth_player_name}", &account.name)
         .replace("${version_name}", version_id)
@@ -441,4 +588,6 @@ fn replace_tokens(
             &libraries_dir().display().to_string(),
         )
         .replace("${classpath_separator}", ":")
+        .replace("${resolution_width}", &width.to_string())
+        .replace("${resolution_height}", &height.to_string())
 }

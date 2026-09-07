@@ -1,3 +1,4 @@
+use crate::http;
 use crate::manifest::{rule_allows, AssetIndex, Library, VersionJson};
 use crate::paths::{assets_dir, ensure_dirs, libraries_dir, versions_dir};
 use futures_util::StreamExt;
@@ -5,7 +6,9 @@ use sha1::{Digest, Sha1};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Semaphore;
 
 #[derive(Clone, serde::Serialize)]
 pub struct ProgressEvent {
@@ -30,33 +33,50 @@ pub async fn download_file(url: &str, dest: &Path, expected_sha1: Option<&str>) 
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    let client = reqwest::Client::new();
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?;
+    let mut last_err = String::new();
+    for attempt in 1..=5u32 {
+        let tmp = dest.with_extension("part");
+        let _ = fs::remove_file(&tmp);
 
+        match download_once(url, &tmp).await {
+            Ok(()) => {
+                if let Some(sha) = expected_sha1 {
+                    if !verify_sha1(&tmp, sha)? {
+                        let _ = fs::remove_file(&tmp);
+                        last_err = format!("SHA1 mismatch voor {url}");
+                    } else {
+                        fs::rename(&tmp, dest).map_err(|e| format!("Rename mislukt: {e}"))?;
+                        return Ok(());
+                    }
+                } else {
+                    fs::rename(&tmp, dest).map_err(|e| format!("Rename mislukt: {e}"))?;
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                let _ = fs::remove_file(&tmp);
+                last_err = e;
+            }
+        }
+
+        let delay_ms = 300u64 * (1u64 << (attempt - 1).min(4));
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+    }
+
+    Err(format!("{last_err} (na 5 pogingen)"))
+}
+
+async fn download_once(url: &str, tmp: &Path) -> Result<(), String> {
+    let response = http::get_response(url).await?;
     let mut stream = response.bytes_stream();
-    let tmp = dest.with_extension("tmp");
-    let mut file = File::create(&tmp).map_err(|e| e.to_string())?;
+    let mut file = File::create(tmp).map_err(|e| format!("Kan temp-bestand niet maken: {e}"))?;
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        let chunk = chunk.map_err(|e| format!("Download afgebroken ({url}): {e}"))?;
+        file.write_all(&chunk)
+            .map_err(|e| format!("Schrijven mislukt: {e}"))?;
     }
     drop(file);
-
-    if let Some(sha) = expected_sha1 {
-        if !verify_sha1(&tmp, sha)? {
-            let _ = fs::remove_file(&tmp);
-            return Err(format!("SHA1 mismatch for {}", dest.display()));
-        }
-    }
-
-    fs::rename(&tmp, dest).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -79,7 +99,7 @@ pub async fn install_vanilla(
         "fetch",
         0,
         1,
-        &format!("Fetching version metadata for {version_id}"),
+        &format!("Versie-metadata ophalen voor {version_id}"),
     );
 
     let raw = crate::manifest::fetch_version_json(version_url).await?;
@@ -93,16 +113,14 @@ pub async fn install_vanilla(
     )
     .map_err(|e| e.to_string())?;
 
-    // Client jar
     if let Some(downloads) = &version.downloads {
         if let Some(client) = &downloads.client {
-            emit(&app, "client", 0, 1, "Downloading client jar");
+            emit(&app, "client", 0, 1, "Client jar downloaden");
             let jar = version_dir.join(format!("{version_id}.jar"));
             download_file(&client.url, &jar, Some(&client.sha1)).await?;
         }
     }
 
-    // Libraries
     let libs: Vec<&Library> = version
         .libraries
         .iter()
@@ -120,44 +138,66 @@ pub async fn install_vanilla(
         download_library(lib).await?;
     }
 
-    // Assets
     if let Some(index_ref) = &version.asset_index {
-        emit(&app, "assets", 0, 1, "Downloading asset index");
-        let index_path = assets_dir().join("indexes").join(format!("{}.json", index_ref.id));
+        emit(&app, "assets", 0, 1, "Asset-index downloaden");
+        let index_path = assets_dir()
+            .join("indexes")
+            .join(format!("{}.json", index_ref.id));
         download_file(&index_ref.url, &index_path, Some(&index_ref.sha1)).await?;
 
         let index: AssetIndex =
             serde_json::from_str(&fs::read_to_string(&index_path).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
 
-        let objects: Vec<_> = index.objects.values().collect();
-        let total = objects.len() as u64;
-        for (i, obj) in objects.iter().enumerate() {
-            if i % 25 == 0 {
-                emit(
-                    &app,
-                    "assets",
-                    i as u64,
-                    total,
-                    &format!("Assets {i}/{total}"),
-                );
-            }
-            let prefix = &obj.hash[..2];
-            let path = assets_dir().join("objects").join(prefix).join(&obj.hash);
-            let url = format!(
-                "https://resources.download.minecraft.net/{prefix}/{}",
-                obj.hash
-            );
-            download_file(&url, &path, Some(&obj.hash)).await?;
-        }
+        download_assets(&app, &index).await?;
     }
 
-    // Default instance
     let instance = crate::paths::instances_dir().join(version_id);
     fs::create_dir_all(instance.join("mods")).map_err(|e| e.to_string())?;
 
-    emit(&app, "done", 1, 1, "Install complete");
+    emit(&app, "done", 1, 1, "Installatie klaar");
     Ok(version_id.to_string())
+}
+
+async fn download_assets(app: &AppHandle, index: &AssetIndex) -> Result<(), String> {
+    let mut hashes: Vec<String> = index.objects.values().map(|o| o.hash.clone()).collect();
+    hashes.sort();
+    hashes.dedup();
+
+    let total = hashes.len() as u64;
+    let done = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let sem = Arc::new(Semaphore::new(12));
+    let mut joins = Vec::new();
+
+    for hash in hashes {
+        let permit = sem.clone().acquire_owned().await.map_err(|e| e.to_string())?;
+        let app = app.clone();
+        let done = done.clone();
+        joins.push(tokio::spawn(async move {
+            let _permit = permit;
+            let prefix = &hash[..2];
+            let path = assets_dir().join("objects").join(prefix).join(&hash);
+            let url = format!("https://resources.download.minecraft.net/{prefix}/{hash}");
+            let result = download_file(&url, &path, Some(&hash)).await;
+            let current = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if current % 20 == 0 || current == total {
+                emit(
+                    &app,
+                    "assets",
+                    current,
+                    total,
+                    &format!("Assets {current}/{total}"),
+                );
+            }
+            result
+        }));
+    }
+
+    for join in joins {
+        join.await
+            .map_err(|e| format!("Asset-download taak crashed: {e}"))??;
+    }
+    Ok(())
 }
 
 async fn download_library(lib: &Library) -> Result<(), String> {
@@ -167,7 +207,6 @@ async fn download_library(lib: &Library) -> Result<(), String> {
             download_file(&artifact.url, &dest, Some(&artifact.sha1)).await?;
         }
         if let Some(classifiers) = &downloads.classifiers {
-            // Prefer macOS natives classifiers
             for (key, artifact) in classifiers {
                 if key.contains("natives-osx")
                     || key.contains("natives-macos")

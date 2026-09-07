@@ -1,6 +1,8 @@
 mod auth;
+mod branding;
 mod download;
 mod forge;
+mod http;
 mod launch;
 mod loaders;
 mod manifest;

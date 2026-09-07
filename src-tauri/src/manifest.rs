@@ -150,34 +150,31 @@ pub struct AssetObject {
 }
 
 pub async fn fetch_version_manifest() -> Result<VersionManifest, String> {
-    let client = reqwest::Client::new();
-    client
-        .get(VERSION_MANIFEST)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
+    crate::http::get_response(VERSION_MANIFEST)
+        .await?
         .json()
         .await
         .map_err(|e| e.to_string())
 }
 
 pub async fn fetch_version_json(url: &str) -> Result<serde_json::Value, String> {
-    let client = reqwest::Client::new();
-    client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
+    crate::http::get_response(url)
+        .await?
         .json()
         .await
         .map_err(|e| e.to_string())
 }
 
 pub fn rule_allows(rules: &Option<Vec<Rule>>) -> bool {
+    rule_allows_with_features(rules, &HashMap::new())
+}
+
+/// Evaluate Mojang OS/feature rules. Feature keys must match exactly when present
+/// (e.g. `is_demo_user: true` only applies when that feature is enabled).
+pub fn rule_allows_with_features(
+    rules: &Option<Vec<Rule>>,
+    features: &HashMap<String, bool>,
+) -> bool {
     let Some(rules) = rules else {
         return true;
     };
@@ -202,7 +199,7 @@ pub fn rule_allows(rules: &Option<Vec<Rule>>) -> bool {
                         if cfg!(target_arch = "aarch64") {
                             a == "arm64" || a == "aarch64"
                         } else {
-                            a == "x86_64" || a == "x86" || a == "amd64"
+                            a == "x86" || a == "x86_64" || a == "amd64"
                         }
                     })
                     .unwrap_or(true);
@@ -210,7 +207,14 @@ pub fn rule_allows(rules: &Option<Vec<Rule>>) -> bool {
             }
         };
 
-        if os_ok {
+        let features_ok = match &rule.features {
+            None => true,
+            Some(required) => required
+                .iter()
+                .all(|(key, needed)| features.get(key).copied().unwrap_or(false) == *needed),
+        };
+
+        if os_ok && features_ok {
             allowed = rule.action == "allow";
         }
     }

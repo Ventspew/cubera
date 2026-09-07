@@ -67,10 +67,7 @@ pub async fn get_player_avatar_data_url(uuid: &str) -> Result<String, String> {
 }
 
 async fn download_avatar_bytes(undashed: &str) -> Result<Vec<u8>, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("Cubera/0.1.0 (Minecraft Launcher)")
-        .build()
-        .map_err(|e| e.to_string())?;
+    let client = crate::http::client();
 
     // 1) Prefer rendered head services (fast, correct crop)
     for url in [
@@ -78,14 +75,14 @@ async fn download_avatar_bytes(undashed: &str) -> Result<Vec<u8>, String> {
         format!("https://mc-heads.net/avatar/{undashed}/128"),
         format!("https://crafatar.com/avatars/{undashed}?size=128&overlay=true"),
     ] {
-        if let Ok(bytes) = fetch_png(&client, &url).await {
+        if let Ok(bytes) = fetch_png(client, &url).await {
             return Ok(bytes);
         }
     }
 
     // 2) Fallback: Mojang session skin URL → full skin texture (still usable as img)
-    if let Ok(skin_url) = fetch_mojang_skin_url(&client, undashed).await {
-        if let Ok(bytes) = fetch_png(&client, &skin_url).await {
+    if let Ok(skin_url) = fetch_mojang_skin_url(client, undashed).await {
+        if let Ok(bytes) = fetch_png(client, &skin_url).await {
             return Ok(bytes);
         }
     }

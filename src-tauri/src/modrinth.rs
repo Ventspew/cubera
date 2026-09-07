@@ -58,15 +58,8 @@ pub async fn search_mods(query: &str, loader: Option<String>, game_version: Opti
         urlencoding::encode(&facets_json)
     );
 
-    let client = reqwest::Client::new();
-    client
-        .get(&url)
-        .header("User-Agent", "Cubera/0.1.0 (Minecraft Launcher)")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
+    crate::http::get_response(&url)
+        .await?
         .json()
         .await
         .map_err(|e| e.to_string())
@@ -88,15 +81,8 @@ pub async fn get_project_versions(
         url.push_str(&format!("loaders={}", urlencoding::encode(&format!("[\"{l}\"]"))));
     }
 
-    let client = reqwest::Client::new();
-    client
-        .get(&url)
-        .header("User-Agent", "Cubera/0.1.0 (Minecraft Launcher)")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
+    crate::http::get_response(&url)
+        .await?
         .json()
         .await
         .map_err(|e| e.to_string())
